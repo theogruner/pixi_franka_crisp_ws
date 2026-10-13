@@ -5,7 +5,7 @@
 [submodule "src/franka_launch"]
 	path = src/franka_launch
 	url = git@github.com:DFKI-SAIROL/franka_launch.git
-	branch = main
+	branch = dev/bimanual
 [submodule "src/crisp_controllers"]
 	path = src/crisp_controllers
 	url = git@github.com:DFKI-SAIROL/crisp_controllers.git
@@ -33,7 +33,7 @@
 [submodule "src/robot_ik_layer"]
 	path = src/robot_ik_layer
 	url = git@github.com:DFKI-SAIROL/robot_ik_layer.git
-	branch = main
+	branch = dev/bimanual
 [submodule "src/robot_safety_layer"]
 	path = src/robot_safety_layer
 	url = git@github.com:DFKI-SAIROL/robot_safety_layer.git
@@ -41,7 +41,7 @@
 [submodule "src/franka_py"]
 	path = src/franka_py
 	url = git@github.com:DFKI-SAIROL/franka_py.git
-	branch = main
+	branch = dev/bimanual
 [submodule "src/franka_custom_msgs"]
 	path = src/franka_custom_msgs
 	url = git@github.com:DFKI-SAIROL/franka_custom_msgs.git
@@ -49,7 +49,7 @@
 [submodule "src/franka_data_collection"]
 	path = src/franka_data_collection
 	url = git@github.com:DFKI-SAIROL/franka_data_collection.git
-	branch = main
+	branch = dev/bimanual
 [submodule "src/fake_effort_hardware"]
 	path = src/fake_effort_hardware
 	url = git@github.com:DFKI-SAIROL/fake_effort_hardware.git

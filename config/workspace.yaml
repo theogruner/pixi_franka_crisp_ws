@@ -59,12 +59,39 @@ repos:
 
   # --- DFKI platform ----------------------------------------------------------
   franka_robot_description: {url: "git@github.com:DFKI-SAIROL/franka_robot_description.git", visibility: public}
-  franka_launch:            {url: "git@github.com:DFKI-SAIROL/franka_launch.git",            visibility: public}
-  robot_ik_layer:           {url: "git@github.com:DFKI-SAIROL/robot_ik_layer.git",           visibility: public}
+  # --- in-flight: based on xiaoqi's open PRs ---------------------------------
+  # These four sit on `dev/bimanual`, branched off `origin/dev/xiaoqi` so the bimanual
+  # port can build on the boolean-override precedence chain and `end_effector_frame: auto`
+  # before those PRs are reviewed (the reviewer is unavailable indefinitely).
+  #
+  # `rev` is the base we branched from - keep it, it is the recovery point if a PR is
+  # squash-merged or force-pushed:
+  #   git rebase --onto origin/main <rev> dev/bimanual
+  # Re-point branch to `main` and drop the rev once the PRs land.
+  # NOTE: franka_data_collection branches off main, NOT dev/xiaoqi - that branch's only
+  # commit hardcodes a personal storage_path.
+  franka_launch:
+    url: git@github.com:DFKI-SAIROL/franka_launch.git
+    visibility: public
+    branch: dev/bimanual
+    rev: c079968   # dev/xiaoqi tip: launch_utils precedence helpers + end_effector_frame auto
+  robot_ik_layer:
+    url: git@github.com:DFKI-SAIROL/robot_ik_layer.git
+    visibility: public
+    branch: dev/bimanual
+    rev: 726cf69   # dev/xiaoqi tip: overrides in start_ijk.launch.py
   robot_safety_layer:       {url: "git@github.com:DFKI-SAIROL/robot_safety_layer.git",       visibility: public}
-  franka_py:                {url: "git@github.com:DFKI-SAIROL/franka_py.git",                visibility: public}
+  franka_py:
+    url: git@github.com:DFKI-SAIROL/franka_py.git
+    visibility: public
+    branch: dev/bimanual
+    rev: e0d495f   # dev/xiaoqi tip: overrides in the Meta Quest launch
   franka_custom_msgs:       {url: "git@github.com:DFKI-SAIROL/franka_custom_msgs.git",       visibility: public}
-  franka_data_collection:   {url: "git@github.com:DFKI-SAIROL/franka_data_collection.git",   visibility: public}
+  franka_data_collection:
+    url: git@github.com:DFKI-SAIROL/franka_data_collection.git
+    visibility: public
+    branch: dev/bimanual
+    rev: 38eb8bf   # main (dev/xiaoqi deliberately not used)
   fake_effort_hardware:     {url: "git@github.com:DFKI-SAIROL/fake_effort_hardware.git",     visibility: public}
 
 groups:
