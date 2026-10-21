@@ -38,10 +38,6 @@
 	path = src/robot_safety_layer
 	url = git@github.com:DFKI-SAIROL/robot_safety_layer.git
 	branch = main
-[submodule "src/franka_py"]
-	path = src/franka_py
-	url = git@github.com:DFKI-SAIROL/franka_py.git
-	branch = dev/bimanual
 [submodule "src/franka_custom_msgs"]
 	path = src/franka_custom_msgs
 	url = git@github.com:DFKI-SAIROL/franka_custom_msgs.git
@@ -54,3 +50,6 @@
 	path = src/fake_effort_hardware
 	url = git@github.com:DFKI-SAIROL/fake_effort_hardware.git
 	branch = main
+[submodule "src/franka_meta_quest"]
+	path = src/franka_meta_quest
+	url = git@github.com:DFKI-SAIROL/franka_meta_quest.git

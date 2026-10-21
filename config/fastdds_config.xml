@@ -1,46 +1,129 @@
 <?xml version="1.0" encoding="UTF-8" ?>
-<dds xmlns="http://eprosima.com">
-    <profiles>
+<!--
+  Fast DDS profile for the control PC (multi-homed: 2 arms, camera link, lab, docker).
+  Loaded by scripts/set_ros_env.sh via FASTRTPS_DEFAULT_PROFILES_FILE.
 
-        <transport_descriptors>
-            <transport_descriptor>
+  PURPOSE 1 - stop camera black-holing:
+    Restrict the PC's UDP transport to loopback + the 10G camera link (192.168.10.100)
+    so the PC does NOT advertise docker0 (172.17.0.1) etc. The Jetson also owns a
+    docker0 172.17.0.1 and mis-routes image data to its own bridge otherwise
+    (topics visible, `ros2 topic echo` silent). interfaceWhiteList only takes effect
+    with useBuiltinTransports=false.
+
+  PURPOSE 2 - keep DISCOVERY working for the whole robot graph:
+    useBuiltinTransports=false also removes automatic multicast discovery, and in
+    Fast DDS 2.6 a custom metatrafficMulticastLocatorList plus initialPeersList breaks
+    discovery entirely (0 peers). The lab switch does not reliably pass multicast
+    either, so discovery is pure UNICAST: the well-known metatraffic-unicast ports of
+    the first 40 same-host participants, plus the Jetson as a peer.
+
+    Metatraffic unicast port = 7400 + 250*ROS_DOMAIN_ID + 10 + 2*participantId.
+    These ports are for ROS_DOMAIN_ID=5 -> base 8660, participantId 0..39.
+    Change the domain or run more than 40 local nodes and the later participants are
+    silently islanded; set_ros_env.sh warns on a domain mismatch. Regenerate with:
+      python3 -c "b=7400+250*D+10; print('\n'.join(str(b+2*i) for i in range(40)))"
+
+  Cleaner long-term fixes: a Fast DDS Discovery Server, or an IGMP querier / disabled
+  IGMP snooping on the switch so multicast survives.
+-->
+<profiles xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+    <transport_descriptors>
+        <transport_descriptor>
+            <transport_id>udp_transport</transport_id>
+            <type>UDPv4</type>
+            <interfaceWhiteList>
+                <address>127.0.0.1</address>
+                <address>192.168.10.100</address>
+            </interfaceWhiteList>
+            <sendBufferSize>134217728</sendBufferSize>
+            <receiveBufferSize>134217728</receiveBufferSize>
+        </transport_descriptor>
+    </transport_descriptors>
+
+    <data_writer profile_name="default_async_writer" is_default_profile="true">
+        <qos>
+            <publishMode>
+                <kind>ASYNCHRONOUS</kind>
+            </publishMode>
+        </qos>
+        <historyMemoryPolicy>PREALLOCATED_WITH_REALLOC</historyMemoryPolicy>
+    </data_writer>
+
+    <participant profile_name="pc_participant" is_default_profile="true">
+        <rtps>
+            <userTransports>
                 <transport_id>udp_transport</transport_id>
-                <type>UDPv4</type>
-                <interfaceWhiteList>
-                    <address>127.0.0.1</address>
-                    <address>192.168.10.100</address>
-                </interfaceWhiteList>
-            </transport_descriptor>
-            <transport_descriptor>
-                <transport_id>shm_transport</transport_id>
-                <type>SHM</type>
-            </transport_descriptor>
-        </transport_descriptors>
-
-        <data_writer profile_name="default_async_writer" is_default_profile="true">
-            <qos>
-                <publishMode>
-                    <kind>ASYNCHRONOUS</kind>
-                </publishMode>
-            </qos>
-            <historyMemoryPolicy>PREALLOCATED_WITH_REALLOC</historyMemoryPolicy>
-        </data_writer>
-
-        <participant profile_name="pc_participant" is_default_profile="true">
-            <rtps>
-                <userTransports>
-                    <transport_id>shm_transport</transport_id>
-                    <transport_id>udp_transport</transport_id>
-                </userTransports>
-                <!-- do NOT disable builtin transports here -->
-                <builtin>
-                    <initialPeersList>
-                        <locator><udpv4><address>192.168.10.212</address></udpv4></locator>
-                        <locator><udpv4><address>127.0.0.1</address></udpv4></locator>
-                    </initialPeersList>
-                </builtin>
-            </rtps>
-        </participant>
-
-    </profiles>
-</dds>
+            </userTransports>
+            <useBuiltinTransports>false</useBuiltinTransports>
+            <builtin>
+                <initialPeersList>
+                    <locator><udpv4><address>127.0.0.1</address><port>8660</port></udpv4></locator>
+                    <locator><udpv4><address>127.0.0.1</address><port>8662</port></udpv4></locator>
+                    <locator><udpv4><address>127.0.0.1</address><port>8664</port></udpv4></locator>
+                    <locator><udpv4><address>127.0.0.1</address><port>8666</port></udpv4></locator>
+                    <locator><udpv4><address>127.0.0.1</address><port>8668</port></udpv4></locator>
+                    <locator><udpv4><address>127.0.0.1</address><port>8670</port></udpv4></locator>
+                    <locator><udpv4><address>127.0.0.1</address><port>8672</port></udpv4></locator>
+                    <locator><udpv4><address>127.0.0.1</address><port>8674</port></udpv4></locator>
+                    <locator><udpv4><address>127.0.0.1</address><port>8676</port></udpv4></locator>
+                    <locator><udpv4><address>127.0.0.1</address><port>8678</port></udpv4></locator>
+                    <locator><udpv4><address>127.0.0.1</address><port>8680</port></udpv4></locator>
+                    <locator><udpv4><address>127.0.0.1</address><port>8682</port></udpv4></locator>
+                    <locator><udpv4><address>127.0.0.1</address><port>8684</port></udpv4></locator>
+                    <locator><udpv4><address>127.0.0.1</address><port>8686</port></udpv4></locator>
+                    <locator><udpv4><address>127.0.0.1</address><port>8688</port></udpv4></locator>
+                    <locator><udpv4><address>127.0.0.1</address><port>8690</port></udpv4></locator>
+                    <locator><udpv4><address>127.0.0.1</address><port>8692</port></udpv4></locator>
+                    <locator><udpv4><address>127.0.0.1</address><port>8694</port></udpv4></locator>
+                    <locator><udpv4><address>127.0.0.1</address><port>8696</port></udpv4></locator>
+                    <locator><udpv4><address>127.0.0.1</address><port>8698</port></udpv4></locator>
+                    <locator><udpv4><address>127.0.0.1</address><port>8700</port></udpv4></locator>
+                    <locator><udpv4><address>127.0.0.1</address><port>8702</port></udpv4></locator>
+                    <locator><udpv4><address>127.0.0.1</address><port>8704</port></udpv4></locator>
+                    <locator><udpv4><address>127.0.0.1</address><port>8706</port></udpv4></locator>
+                    <locator><udpv4><address>127.0.0.1</address><port>8708</port></udpv4></locator>
+                    <locator><udpv4><address>127.0.0.1</address><port>8710</port></udpv4></locator>
+                    <locator><udpv4><address>127.0.0.1</address><port>8712</port></udpv4></locator>
+                    <locator><udpv4><address>127.0.0.1</address><port>8714</port></udpv4></locator>
+                    <locator><udpv4><address>127.0.0.1</address><port>8716</port></udpv4></locator>
+                    <locator><udpv4><address>127.0.0.1</address><port>8718</port></udpv4></locator>
+                    <locator><udpv4><address>127.0.0.1</address><port>8720</port></udpv4></locator>
+                    <locator><udpv4><address>127.0.0.1</address><port>8722</port></udpv4></locator>
+                    <locator><udpv4><address>127.0.0.1</address><port>8724</port></udpv4></locator>
+                    <locator><udpv4><address>127.0.0.1</address><port>8726</port></udpv4></locator>
+                    <locator><udpv4><address>127.0.0.1</address><port>8728</port></udpv4></locator>
+                    <locator><udpv4><address>127.0.0.1</address><port>8730</port></udpv4></locator>
+                    <locator><udpv4><address>127.0.0.1</address><port>8732</port></udpv4></locator>
+                    <locator><udpv4><address>127.0.0.1</address><port>8734</port></udpv4></locator>
+                    <locator><udpv4><address>127.0.0.1</address><port>8736</port></udpv4></locator>
+                    <locator><udpv4><address>127.0.0.1</address><port>8738</port></udpv4></locator>
+                    <!-- Jetson. A PORTLESS peer only probes participantId 0..3
+                         (maxInitialPeersRange), so with several camera nodes the later
+                         participants are never discovered - symptom: one camera streams
+                         to the PC and the rest are invisible while running fine remotely.
+                         Same port rule as above: 8660 + 2*participantId, ids 0..19. -->
+                    <locator><udpv4><address>192.168.10.212</address><port>8660</port></udpv4></locator>
+                    <locator><udpv4><address>192.168.10.212</address><port>8662</port></udpv4></locator>
+                    <locator><udpv4><address>192.168.10.212</address><port>8664</port></udpv4></locator>
+                    <locator><udpv4><address>192.168.10.212</address><port>8666</port></udpv4></locator>
+                    <locator><udpv4><address>192.168.10.212</address><port>8668</port></udpv4></locator>
+                    <locator><udpv4><address>192.168.10.212</address><port>8670</port></udpv4></locator>
+                    <locator><udpv4><address>192.168.10.212</address><port>8672</port></udpv4></locator>
+                    <locator><udpv4><address>192.168.10.212</address><port>8674</port></udpv4></locator>
+                    <locator><udpv4><address>192.168.10.212</address><port>8676</port></udpv4></locator>
+                    <locator><udpv4><address>192.168.10.212</address><port>8678</port></udpv4></locator>
+                    <locator><udpv4><address>192.168.10.212</address><port>8680</port></udpv4></locator>
+                    <locator><udpv4><address>192.168.10.212</address><port>8682</port></udpv4></locator>
+                    <locator><udpv4><address>192.168.10.212</address><port>8684</port></udpv4></locator>
+                    <locator><udpv4><address>192.168.10.212</address><port>8686</port></udpv4></locator>
+                    <locator><udpv4><address>192.168.10.212</address><port>8688</port></udpv4></locator>
+                    <locator><udpv4><address>192.168.10.212</address><port>8690</port></udpv4></locator>
+                    <locator><udpv4><address>192.168.10.212</address><port>8692</port></udpv4></locator>
+                    <locator><udpv4><address>192.168.10.212</address><port>8694</port></udpv4></locator>
+                    <locator><udpv4><address>192.168.10.212</address><port>8696</port></udpv4></locator>
+                    <locator><udpv4><address>192.168.10.212</address><port>8698</port></udpv4></locator>
+                </initialPeersList>
+            </builtin>
+        </rtps>
+    </participant>
+</profiles>

@@ -21,7 +21,7 @@ pkg-config = "*"
 make = "*"
 ninja = "*"
 # Pin below 4: pinocchio 4.0.0 reorganised its headers (e.g. pinocchio/spatial/se3.hpp moved
-# under pinocchio/deprecated/), which breaks crisp_controllers and franka_control_module.
+# under pinocchio/deprecated/), which breaks crisp_controllers.
 # Drop the pin once the sources are ported.
 pinocchio = ">=3,<4"
 pure-python-adb = ">=0.3.0.dev0,<0.4"

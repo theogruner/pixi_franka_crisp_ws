@@ -81,11 +81,7 @@ repos:
     branch: dev/bimanual
     rev: 726cf69   # dev/xiaoqi tip: overrides in start_ijk.launch.py
   robot_safety_layer:       {url: "git@github.com:DFKI-SAIROL/robot_safety_layer.git",       visibility: public}
-  franka_py:
-    url: git@github.com:DFKI-SAIROL/franka_py.git
-    visibility: public
-    branch: dev/bimanual
-    rev: e0d495f   # dev/xiaoqi tip: overrides in the Meta Quest launch
+  franka_meta_quest:        {url: "git@github.com:DFKI-SAIROL/franka_meta_quest.git",        visibility: public, branch: dev/bimanual}
   franka_custom_msgs:       {url: "git@github.com:DFKI-SAIROL/franka_custom_msgs.git",       visibility: public}
   franka_data_collection:
     url: git@github.com:DFKI-SAIROL/franka_data_collection.git
@@ -99,17 +95,15 @@ groups:
                 franka_robot_description, franka_launch]
   crisp:       [crisp_controllers, crisp_py, crisp_gym]
   dynamixel:   [dynamixel_hardware_interface, DynamixelSDK, dynamixel_interfaces]
-  # franka_py is a multi-package repo: it ships franka_client, franka_control_module,
-  # franka_meta_quest (VR teleop), franka_visualization and zed_rig_aggregator_node.
-  # Groups cannot be finer-grained than repositories, so teleop is not separately
-  # selectable - it arrives with franka_py.
-  dfki-core:   [robot_ik_layer, robot_safety_layer, franka_py, franka_custom_msgs]
+  dfki-core:   [robot_ik_layer, robot_safety_layer, franka_custom_msgs]
+  # Teleop is separately selectable now that it is its own repository.
+  teleop:      [franka_meta_quest]
   data:        [franka_data_collection]
   sim:         [fake_effort_hardware]
 
 profiles:
   # Full lab platform: both arms, Dynamixel grippers, VR teleop, data collection.
-  dfki:     [franka-base, crisp, dynamixel, dfki-core, data, sim]
+  dfki:     [franka-base, crisp, dynamixel, dfki-core, teleop, data, sim]
   # Fake hardware only - no gripper drivers, no teleop.
   sim-only: [franka-base, crisp, dfki-core, sim]
   # Smallest thing that builds and drives an arm.
@@ -119,6 +113,5 @@ profiles:
 # Used to fail early when the selected profile cannot serve the configured hardware.
 gripper_requirements:
   rh_p12_rn_a: dynamixel
-  dynamixel: dynamixel
   franka_default: null
   "None": null
