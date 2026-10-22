@@ -1,0 +1,54 @@
+# ZED camera rig, started by `pixi run cameras` (scripts/run_cameras.sh) and the studio's
+# Cameras button: the ZED wrappers run on the Jetson (its launch_zed.sh <rig>), the rig
+# aggregator runs here and publishes the synced /zed_rig/synced_raw_snapshot.
+
+rig: bimanual            # one of `rigs` below (must exist in the Jetson's launch_zed.sh)
+
+jetson:
+  ssh_target: jetson     # ~/.ssh/config host
+  launch_script: ~/Projects/ros2_ws/launch_zed.sh
+  remote_setup: ~/.bashrc_ros   # sourced first: ROS, the ZED workspace, Fast DDS profile, domain
+  # ZED SDK depth (NEURAL, ~60-100 % of the Jetson GPU for three cameras, ~230 MB/s more on the
+  # camera link). Off: the aggregator publishes RGB-only snapshots and the GPU is free for the
+  # Fast-FoundationStereo point cloud below.
+  depth: false
+  # Advertise the rectified left/right images for the point cloud. The ZED wrapper only sends
+  # them while somebody subscribes, so this costs nothing while the point cloud is off.
+  stereo: true
+  zed_overrides: ~/Projects/Fast-FoundationStereo/jetson   # zed_stereo.yaml / zed_stereo_depth.yaml
+
+# Point cloud: Fast-FoundationStereo on the Jetson (TensorRT, one engine for every camera of the
+# rig), merged in the world frame there; only the merged cloud crosses the camera link.
+# Set up once from the PC with ../Fast-FoundationStereo/jetson/setup_from_pc.sh. Started by
+# `pixi run pointcloud` (scripts/run_pointcloud.sh) or the studio's Point cloud component.
+pointcloud:
+  repo: ~/Projects/Fast-FoundationStereo     # on the Jetson
+  engine: output/onnx_320x480/fast_foundationstereo.engine   # relative to repo
+  rate: 10.0                  # Hz cap of the merged cloud
+  topic: /ffs/points          # sensor_msgs/PointCloud2, x y z rgb, frame world_frame
+  world_frame: world
+  zfar: 1.5                   # m, per camera
+  crop: {min: [-0.4, -1.2, -0.05], max: [1.4, 1.2, 1.2]}   # world box around the workspace
+  voxel: 0.005                # m
+  max_points: 80000
+  # Cameras whose published images are turned by 180 deg relative to their optical frame in the
+  # robot description (none: both wrist frames are right, see cam_image_flip in the URDF).
+  flip_images: []
+  # Where each camera's (left optical) frame is in the world. Wrist cameras: a TF frame of the
+  # robot description. Static cameras: {position, wxyz}; the studio sends the placed/aligned
+  # pose of the active project (Camera placement) live, so they can stay out of here.
+  extrinsics:
+    zed_right_arm: {frame: franka_right_zed_left_camera_optical_frame}
+    zed_left_arm: {frame: franka_left_zed_left_camera_optical_frame}
+
+aggregator:
+  publish_topic: /zed_rig/synced_raw_snapshot
+  topic_prefix: /zed_multi     # zed_multi_camera.launch.py namespace
+
+# Camera names per rig, in the order of launch_zed.sh on the Jetson.
+rigs:
+  bimanual: [zed_middle, zed_right_arm, zed_left_arm]
+  csil: [zed_middle, zed_right, zed_right_arm]
+  racetrack: [zed_middle, zed_right_arm]
+  lieflows: [zed_middle, zed_right]
+  max: [zed_left, zed_middle, zed_right]

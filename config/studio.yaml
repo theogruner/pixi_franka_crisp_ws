@@ -1,0 +1,68 @@
+# Franka Studio (pixi run studio) — web UI for the stack, policies, data collection and cluster.
+# Every key is optional; defaults live in studio/franka_studio/config.py.
+
+server:
+  host: 127.0.0.1      # 0.0.0.0 lets other machines on the network drive the robot
+  port: 8090
+viewer:                # 3D scene viewer (viser), embedded in the page
+  host: 127.0.0.1      # must be reachable by the browser: use 0.0.0.0 together with server.host
+  port: 8091
+  rate_hz: 15
+  public_url: null     # set when the viewer is reached through a proxy/tunnel
+monitor_rate_hz: 10    # how often the active env is observed while nothing steps it
+
+projects_dir: projects
+default_project: example
+
+# Where the policy client's flat modules live (msg_extractors, action_processors, services_pb2,
+# lerobot_utils). The scene env uses the same extractors/processors as the policy client.
+client_paths:
+  - src/franka_py/franka_client/franka_client
+# Extra modules that register MSG_EXTRACTOR / ACTION_PROCESSORS entries (importable from
+# client_paths or the environment), e.g. a newer client with absolute pose actions.
+plugin_modules: []
+
+# Module paths the policy server expects when unpickling observations / the policy config.
+wire:
+  observation_module: franka_client.client
+  policy_config_module: lerobot_utils
+
+data_collector:
+  component: data_collection
+  trigger_service: /data_collector/record_data_trigger
+  node: /data_collector   # its extra_topics parameter gets the topics of the enabled modalities
+
+# Startable components, shown in this order. cmd runs in bash from the workspace root in its own
+# process group; Stop sends SIGINT -> SIGTERM -> SIGKILL to the whole group. probe_* marks a
+# component as running when it was started outside the studio. A project.yaml can add or
+# override components (e.g. a local policy server); set one to null to hide it.
+components:
+  robot:
+    label: Robot
+    icon: robot
+    cmd: pixi run -e humble robot
+    env: {ROBOT_NO_TMUX: "1"}       # keep the launches in this process group (no tmux session)
+    probe_topic: /franka_right/franka/joint_states
+  cameras:
+    label: Cameras
+    icon: camera
+    # ZED wrappers on the Jetson + the rig aggregator here; the rig is chosen in
+    # config/cameras.yaml (or append a rig name: `pixi run -e humble cameras csil`).
+    cmd: pixi run -e humble cameras
+    probe_topic: /zed_rig/synced_raw_snapshot
+  pointcloud:
+    label: Point cloud
+    icon: cloud
+    # Fast-FoundationStereo for every rig camera on the Jetson -> /ffs/points (config/cameras.yaml
+    # `pointcloud`). Also started / stopped by the Point cloud modality (Observation space).
+    cmd: pixi run -e humble pointcloud
+    probe_topic: /ffs/status
+  teleop:
+    label: Teleoperation
+    icon: gamepad
+    cmd: pixi run -e humble teleop
+  data_collection:
+    label: Data collector
+    icon: record
+    cmd: pixi run -e humble data-collection
+    probe_service: /data_collector/record_data_trigger
