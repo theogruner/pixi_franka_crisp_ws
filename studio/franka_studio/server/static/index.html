@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Franka Studio</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%2338bdf8'/%3E%3Cstop offset='1' stop-color='%23a78bfa'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='9' fill='url(%23g)'/%3E%3Cpath d='M10 22V10h12M10 16h8' stroke='%23fff' stroke-width='3' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+  <link rel="stylesheet" href="/static/app.css">
+  <script>
+    // ?theme=light|dark wins over the remembered choice
+    try {
+      const t = new URLSearchParams(location.search).get("theme") || localStorage.getItem("studio-theme");
+      if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
+    } catch (e) {}
+  </script>
+</head>
+<body>
+  <div class="backdrop" aria-hidden="true"></div>
+
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark">F</div>
+      <div class="brand-text">
+        <span class="brand-name">Franka Studio</span>
+        <span class="brand-sub" id="env-name">no scene</span>
+      </div>
+    </div>
+
+    <div class="topbar-center">
+      <label class="select-pill" title="Project">
+        <svg class="i"><use href="#i-folder"/></svg>
+        <select id="project-select" aria-label="Project"></select>
+      </label>
+      <div class="chip" id="mode-chip"><span class="dot"></span><span id="mode-text">idle</span></div>
+    </div>
+
+    <div class="topbar-right">
+      <div class="conn" id="conn" title="Connection to the studio"><span class="dot"></span><span>offline</span></div>
+      <button class="icon-btn" id="theme-toggle" title="Toggle light / dark">
+        <svg class="i theme-dark"><use href="#i-moon"/></svg>
+        <svg class="i theme-light"><use href="#i-sun"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <!-- ============ left rail ============ -->
+    <aside class="rail rail-left">
+      <section class="card" id="stack-card">
+        <div class="card-head">
+          <h2><svg class="i"><use href="#i-layers"/></svg>Stack</h2>
+          <div class="card-actions">
+            <button class="btn btn-ghost btn-sm" id="start-all" title="Start robot, cameras and teleop">Start all</button>
+            <button class="btn btn-ghost btn-sm danger-text" id="stop-all" title="Stop everything the studio started">Stop all</button>
+          </div>
+        </div>
+        <div class="components" id="components"></div>
+      </section>
+
+      <section class="card" id="space-card" hidden>
+        <div class="card-head">
+          <h2><svg class="i"><use href="#i-sliders"/></svg>Observation space</h2>
+          <span class="muted small" id="space-sub"></span>
+        </div>
+        <div class="modalities" id="modalities"></div>
+        <div class="pc-status" id="pc-status" hidden></div>
+        <div class="record-line" id="record-line"></div>
+      </section>
+
+      <section class="card" id="cluster-card">
+        <div class="card-head">
+          <h2><svg class="i"><use href="#i-cloud"/></svg>Cluster</h2>
+          <span class="muted small" id="cluster-host"></span>
+        </div>
+
+        <div class="sub-head">Copy &amp; convert</div>
+        <div class="field-row">
+          <div class="kv"><span>Dataset</span><b id="sync-target">—</b></div>
+        </div>
+        <label class="field">
+          <span>Conversion config</span>
+          <select id="convert-config"></select>
+        </label>
+        <div class="btn-row">
+          <button class="btn btn-soft" id="sync-only"><svg class="i"><use href="#i-upload"/></svg>Copy</button>
+          <button class="btn btn-primary" id="sync-convert"><svg class="i"><use href="#i-sparkles"/></svg>Copy + convert</button>
+        </div>
+
+        <div class="sub-head">Training</div>
+        <label class="field">
+          <span>Training config</span>
+          <select id="train-config"></select>
+        </label>
+        <button class="btn btn-primary btn-block" id="train-btn"><svg class="i"><use href="#i-rocket"/></svg>Start training</button>
+
+        <div class="sub-head with-action">
+          <span>Jobs</span>
+          <button class="icon-btn sm" id="jobs-refresh" title="Refresh SLURM states"><svg class="i"><use href="#i-refresh"/></svg></button>
+        </div>
+        <div class="jobs" id="jobs"><div class="empty">No cluster jobs yet.</div></div>
+      </section>
+    </aside>
+
+    <!-- ============ center ============ -->
+    <section class="center">
+      <section class="card viewer-card">
+        <div class="viewer-head">
+          <div class="viewer-title">
+            <h2><svg class="i"><use href="#i-cube"/></svg>Scene</h2>
+            <span class="muted small" id="viewer-sub">gym view of the active env</span>
+          </div>
+          <div class="card-actions">
+            <span class="chip chip-soft" id="obs-rate">— Hz</span>
+            <button class="icon-btn" id="viewer-reload" title="Reload viewer"><svg class="i"><use href="#i-refresh"/></svg></button>
+            <a class="icon-btn" id="viewer-open" target="_blank" title="Open viewer in a new tab"><svg class="i"><use href="#i-external"/></svg></a>
+            <button class="icon-btn" id="viewer-full" title="Fullscreen"><svg class="i"><use href="#i-expand"/></svg></button>
+          </div>
+        </div>
+        <div class="viewer" id="viewer">
+          <iframe id="viewer-frame" title="3D scene" allow="fullscreen"></iframe>
+          <div class="viewer-empty" id="viewer-empty">
+            <svg class="i xl"><use href="#i-cube"/></svg>
+            <p>3D viewer not running</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="card obs-card" id="rig-card" hidden>
+        <div class="card-head">
+          <h2><svg class="i"><use href="#i-camera"/></svg>Cameras <span class="muted small">— everything the rig delivers</span></h2>
+          <div class="card-actions">
+            <span class="muted small" id="rig-status"></span>
+            <label class="size-ctl" title="Image size"><svg class="i"><use href="#i-image"/></svg>
+              <input type="range" class="size-range" min="160" max="960" step="20" value="340" data-target="rig-cams"></label>
+          </div>
+        </div>
+        <div class="cams cams-wide" id="rig-cams"></div>
+      </section>
+
+      <section class="card obs-card">
+        <div class="card-head">
+          <h2><svg class="i"><use href="#i-eye"/></svg>Observation <span class="muted small">— exactly what the policy is fed</span></h2>
+          <div class="card-actions">
+            <span class="muted small" id="obs-missing"></span>
+            <label class="size-ctl" title="Image size"><svg class="i"><use href="#i-image"/></svg>
+              <input type="range" class="size-range" min="140" max="720" step="20" value="260" data-target="cams"></label>
+          </div>
+        </div>
+        <div class="cams" id="cams"><div class="empty">No image features in the active env.</div></div>
+        <div class="features" id="features"></div>
+      </section>
+
+      <section class="card console-card">
+        <div class="card-head">
+          <h2><svg class="i"><use href="#i-terminal"/></svg>Console</h2>
+          <div class="tabs" id="log-tabs"></div>
+          <div class="card-actions">
+            <label class="toggle small"><input type="checkbox" id="log-follow" checked><span></span>follow</label>
+            <button class="icon-btn sm" id="log-clear" title="Clear view"><svg class="i"><use href="#i-trash"/></svg></button>
+          </div>
+        </div>
+        <pre class="console" id="console"></pre>
+      </section>
+    </section>
+
+    <!-- ============ right rail ============ -->
+    <aside class="rail rail-right">
+      <section class="card" id="policy-card">
+        <div class="card-head">
+          <h2><svg class="i"><use href="#i-brain"/></svg>Policy</h2>
+          <button class="icon-btn" id="policies-refresh" title="Rescan the project's policies folder"><svg class="i"><use href="#i-refresh"/></svg></button>
+        </div>
+
+        <div class="policy-tools">
+          <div class="search">
+            <svg class="i"><use href="#i-search"/></svg>
+            <input id="policy-filter" placeholder="Filter policies…" autocomplete="off">
+          </div>
+          <div class="segmented" id="kind-filter">
+            <button data-kind="" class="active">All</button>
+            <button data-kind="vision">Vision</button>
+            <button data-kind="vision_language">V+L</button>
+          </div>
+        </div>
+        <div class="policy-list" id="policy-list"><div class="empty">No policies in this project.</div></div>
+
+        <div class="policy-active" id="policy-active" hidden>
+          <div class="pa-head">
+            <div>
+              <div class="pa-name" id="pa-name"></div>
+              <div class="pa-meta" id="pa-meta"></div>
+            </div>
+            <span class="state-pill" id="pa-state"></span>
+          </div>
+          <div class="queue">
+            <div class="queue-bar"><div id="queue-fill"></div><div id="queue-threshold"></div></div>
+            <div class="queue-stats" id="pa-stats"></div>
+          </div>
+          <div class="prompt" id="prompt-box">
+            <label class="field">
+              <span>Prompt</span>
+              <textarea id="prompt" rows="2" placeholder="Describe the task…"></textarea>
+            </label>
+            <div class="chips" id="prompt-chips"></div>
+          </div>
+          <div class="btn-row">
+            <button class="btn btn-go" id="run-btn"><svg class="i"><use href="#i-play"/></svg>Run</button>
+            <button class="btn btn-stop" id="stop-btn"><svg class="i"><use href="#i-stop"/></svg>Stop</button>
+            <button class="btn btn-soft" id="home-btn" title="Send the home pose"><svg class="i"><use href="#i-home"/></svg></button>
+          </div>
+          <button class="link-btn" id="unload-btn">Unload policy</button>
+        </div>
+        <button class="btn btn-primary btn-block" id="load-btn" disabled><svg class="i"><use href="#i-download"/></svg>Load policy</button>
+      </section>
+
+      <section class="card" id="collect-card">
+        <div class="card-head">
+          <h2><svg class="i"><use href="#i-database"/></svg>Data collection</h2>
+          <span class="badge" id="collect-kind">Demo</span>
+        </div>
+
+        <div class="grid-2">
+          <label class="field">
+            <span>Dataset</span>
+            <input id="dataset" list="dataset-list" placeholder="e.g. coffee" autocomplete="off">
+            <datalist id="dataset-list"></datalist>
+          </label>
+          <label class="field">
+            <span>Task</span>
+            <input id="task" list="task-list" placeholder="e.g. place-cup" autocomplete="off">
+            <datalist id="task-list"></datalist>
+          </label>
+        </div>
+        <label class="field">
+          <span>Instruction <em class="muted">stored with every episode</em></span>
+          <input id="instruction" placeholder="Pick up the cup and place it under the coffee machine." autocomplete="off">
+        </label>
+        <label class="field">
+          <span>Operator</span>
+          <input id="operator" placeholder="Your name" autocomplete="off">
+        </label>
+
+        <div class="record">
+          <button class="rec-btn" id="rec-btn" title="Start / stop recording">
+            <span class="rec-ring"></span><span class="rec-core"></span>
+          </button>
+          <div class="rec-info">
+            <div class="rec-time" id="rec-time">00:00</div>
+            <div class="rec-sub" id="rec-sub">Ready</div>
+          </div>
+          <button class="btn btn-soft danger-text" id="discard-btn" title="Delete the last recorded demo"><svg class="i"><use href="#i-trash"/></svg>Discard last</button>
+        </div>
+        <div class="ds-count" id="ds-count"></div>
+        <div class="episodes" id="episodes"></div>
+      </section>
+    </aside>
+  </main>
+
+  <div class="toasts" id="toasts"></div>
+
+  <!-- icon sprite (lucide-style strokes) -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
+      <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></symbol>
+      <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+      <symbol id="i-layers" viewBox="0 0 24 24"><path d="m12 2 10 5-10 5L2 7z"/><path d="m2 17 10 5 10-5M2 12l10 5 10-5"/></symbol>
+      <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></symbol>
+      <symbol id="i-points" viewBox="0 0 24 24"><circle cx="6" cy="15" r="1.4"/><circle cx="10" cy="9" r="1.4"/><circle cx="14" cy="16" r="1.4"/><circle cx="18" cy="10" r="1.4"/><circle cx="12" cy="4.5" r="1.4"/><circle cx="7" cy="20" r="1.4"/><circle cx="17" cy="20" r="1.4"/><circle cx="20" cy="15" r="1.4"/><circle cx="4" cy="9" r="1.4"/></symbol>
+      <symbol id="i-cloud" viewBox="0 0 24 24"><path d="M17.5 19a4.5 4.5 0 1 0-1.4-8.8A6 6 0 0 0 4.3 12 3.5 3.5 0 0 0 6.5 19z"/></symbol>
+      <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5M4 20h16"/></symbol>
+      <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v12M7 11l5 5 5-5M4 20h16"/></symbol>
+      <symbol id="i-sparkles" viewBox="0 0 24 24"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/><path d="M19 15l.8 2.2 2.2.8-2.2.8L19 21l-.8-2.2-2.2-.8 2.2-.8z"/></symbol>
+      <symbol id="i-rocket" viewBox="0 0 24 24"><path d="M5 15c-1.5 1.3-2 5-2 5s3.7-.5 5-2c.7-.8.7-2.1-.1-2.9a2.1 2.1 0 0 0-2.9-.1z"/><path d="M12 15l-3-3a22 22 0 0 1 2-4A13 13 0 0 1 22 2c0 2.7-.8 7.5-6 11a22 22 0 0 1-4 2z"/><path d="M9 12H4s.5-3 2-4c1.6-1.1 5 0 5 0M12 15v5s3-.5 4-2c1.1-1.6 0-5 0-5"/></symbol>
+      <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M21 12a9 9 0 0 1-15.5 6.2L3 16M3 12a9 9 0 0 1 15.5-6.2L21 8"/><path d="M21 3v5h-5M3 21v-5h5"/></symbol>
+      <symbol id="i-cube" viewBox="0 0 24 24"><path d="m21 16-9 5-9-5V8l9-5 9 5z"/><path d="m3.3 7 8.7 5 8.7-5M12 22V12"/></symbol>
+      <symbol id="i-external" viewBox="0 0 24 24"><path d="M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></symbol>
+      <symbol id="i-expand" viewBox="0 0 24 24"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></symbol>
+      <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></symbol>
+      <symbol id="i-terminal" viewBox="0 0 24 24"><path d="m4 17 6-5-6-5M12 19h8"/></symbol>
+      <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6"/></symbol>
+      <symbol id="i-brain" viewBox="0 0 24 24"><path d="M9.5 2A2.5 2.5 0 0 0 7 4.5v.2A3 3 0 0 0 4.3 9a3 3 0 0 0 .3 5.3A3 3 0 0 0 7 19.5 2.5 2.5 0 0 0 12 20V4.5A2.5 2.5 0 0 0 9.5 2zM14.5 2A2.5 2.5 0 0 1 17 4.5v.2A3 3 0 0 1 19.7 9a3 3 0 0 1-.3 5.3 3 3 0 0 1-2.4 5.2A2.5 2.5 0 0 1 12 20"/></symbol>
+      <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
+      <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4v16l13-8z"/></symbol>
+      <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></symbol>
+      <symbol id="i-home" viewBox="0 0 24 24"><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></symbol>
+      <symbol id="i-database" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></symbol>
+      <symbol id="i-robot" viewBox="0 0 24 24"><path d="M4 20h8M8 20v-4l3-6 5 3M11 10 8 6l3-3 3 3"/><circle cx="16" cy="13" r="2"/><path d="m18 14 3 3"/></symbol>
+      <symbol id="i-camera" viewBox="0 0 24 24"><path d="M4 7h3l2-3h6l2 3h3a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1z"/><circle cx="12" cy="13" r="4"/></symbol>
+      <symbol id="i-gamepad" viewBox="0 0 24 24"><path d="M6 12h4M8 10v4M15 13h.01M18 11h.01"/><rect x="2" y="6" width="20" height="12" rx="6"/></symbol>
+      <symbol id="i-record" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/></symbol>
+      <symbol id="i-server" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="8" rx="2"/><rect x="3" y="13" width="18" height="8" rx="2"/><path d="M7 7h.01M7 17h.01"/></symbol>
+      <symbol id="i-box" viewBox="0 0 24 24"><path d="m21 8-9-5-9 5 9 5z"/><path d="M3 8v8l9 5 9-5V8M12 13v8"/></symbol>
+      <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 9"/></symbol>
+      <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+    </defs>
+  </svg>
+  <script type="module" src="/static/app.js"></script>
+</body>
+</html>
