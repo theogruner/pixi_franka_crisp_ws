@@ -38,6 +38,92 @@ Open tasks at the top, dated log of done/notable changes below. Newest first.
 
 ## Log
 
+### 2026-10-23
+
+#### Joint-space home
+- **Problem:** All homes were Cartesian `grasp_point` targets, which turning the end effectors by
+  pi made wrong; the old stack's joint homing (`home_joints`, safety node `policy_target_joint`)
+  was lost, and the studio's Home published a `PoseStamped` on a path that is a service.
+- **Solution:** `franka_client/joint_home.py`: minimum-jerk joint trajectory through the current
+  safety node's `policy_target_dq` (all joints together, peak `home_joint_max_speed`), settle on
+  the measured joints, then re-target the IK at the reached pose (else it pulls back). Home
+  joints per arm in `teleop_<side>.yaml` (values of the old setup, 2026-10-06; capture new ones
+  with `python -m franka_client.joint_home`). Used by teleop B (held), the studio's Home (project
+  `home_pose` with `ns`; Stop aborts) and the clients' H. Cartesian home stays as fallback.
+
+### 2026-10-22
+
+#### Point cloud observation (Fast-FoundationStereo on the Jetson)
+- **Problem:** Point clouds as an observation / in the recordings, without loading the PC.
+- **Solution:** `../Fast-FoundationStereo/jetson/ffs_rig_node.py` runs one TensorRT engine for
+  all rig cameras on the Jetson and publishes one merged, world-frame cloud (`/ffs/points`); set up
+  from the PC with `jetson/setup_from_pc.sh` (the Jetson has no internet: pixi binary copied,
+  packages through an `ssh -R` SOCKS proxy). Started by `pixi run pointcloud` or the studio's
+  Point cloud modality (new *Observation space* card: modalities in `env.yaml`, recorded topics via
+  the collector's new `extra_topics` parameter). ZED depth is off now (`jetson.depth: false`,
+  aggregator RGB-only), which freed the Jetson GPU and halved the camera link (475 -> 207 MB/s).
+- **Findings:**
+  - Both wrist cameras' frames were unprefixed (`zed_left_camera_optical_frame`) and collided on
+    `/tf_static`; now `<arm_prefix>_zed_*`.
+  - The wrist camera mount: both holders are at the original yaw (-pi/4; the round-1 change by pi
+    was wrong), with both optical frames rolled by pi (`cam_image_flip`, default true): in both
+    wrist clouds the table normal points to the image bottom, i.e. the images are upside down
+    w.r.t. the original optical frames. The whole left end effector (gripper + camera) is mounted
+    on its flange turned by 180 deg relative to the right one (`rpy_ee` and `cam_holder_yaw`
+    3pi/4 in `dfki_fr3_left.yaml`); this turns `franka_left_grasp_point` by pi about z as well. Found by fitting the board plane in each camera's cloud (level to ~3-8°)
+    and matching the board seen by both wrist cameras. `cam_holder_yaw` stays as a per-arm arg.
+  - Without depth the ZED publishes at 60 Hz; capped at 30 Hz (`general.pub_frame_rate`) because
+    the collector encodes 30 fps videos.
+  - The Jetson's `fastdds_jetson.xml` names the PC without ports, so new Jetson nodes never
+    discover most PC participants (no TF). The FFS node uses `jetson/fastdds_ffs.xml` with the
+    ports enumerated (a 160-entry list broke discovery; 80 works).
+  - `ros2 run` does not forward SIGTERM (orphaned aggregator); the ros2 daemon spawned inside a
+    component's process group kept it "running" after it exited. Both fixed.
+- **Open:** 480x320 / 8 iterations takes ~120 ms per camera on the Orin (~1 Hz merged for three
+  cameras). Faster engines (4 iterations, 320x224) still have to be built and compared.
+
+#### Camera extrinsics from an ArUco board
+- **Problem:** The two wrist clouds do not line up and `zed_middle` has no pose.
+- **Solution:** `scripts/python/board_calibration.py` (`pixi run calibrate-board`): bundle
+  adjustment of the reprojected marker corners over the board pose, static camera poses, per-wrist
+  mount corrections (new `<cam>_camera_mount` link; the `cam_pos_*`/`cam_roll..yaw` args of the
+  ZED macro had no effect before: its joint carried a second `<origin>`) and the left base
+  correction (`franka_right` defines the world). `--write` stores them in `dfki_fr3_*.yaml` and the
+  project's `camera_poses.yaml`. Synthetic test with 8 poses per arm: ~0.1 deg / < 1 mm.
+- **Findings:** First single capture: the wrists put the board 59 mm / 7.8 deg apart, and both see
+  the flat board 7-10 deg from horizontal, so both mounts are off (not only the left base). Board:
+  DICT_4X4_50, 3x4, 56.5 mm markers / 5.5 mm gaps (measured; the stereo estimate was 56.2 / 6.7).
+  - `gripper.launch.py` built its own description without the camera args, and its state
+    publisher sends the whole arm + camera to `/tf_static` too: two versions of
+    `franka_left_zed_*` (holder yaw 3pi/4 from the yaml, -pi/4 default) raced there, so each
+    listener got either. That made the earlier left-camera orientation tests unreliable. Now it
+    gets the same camera keys (`CAMERA_KEYS`). The board confirms the 3pi/4 mount of the whole
+    left end effector (gripper + camera): with it the left camera sees the board 58 mm / ~8 deg
+    from the right arm's view; -pi/4 or a flipped image put it 50-85 cm off. (A first reading
+    said -pi/4: it compared TF captured during the race, with the two versions mislabeled.)
+  - 2026-10-23: the right end effector had been mounted the other way round by someone before
+    (that is what the old -pi/4 described). It is mounted like the left one again, so both
+    arms use `rpy_ee` and `cam_holder_yaw` 3pi/4; board captures from before are obsolete.
+  - `config/fastdds_pc.xml` named the Jetson without ports (= its participants 0..3 only): PC
+    processes started after the ZED container came back with a higher id saw no camera topics.
+    Its ports 8660..8738 are listed now, like the local ones.
+
+### 2026-10-21
+
+#### Franka Studio: web UI for stack, policies, data collection and cluster
+- **Problem:** Running an experiment meant several terminals (robot, cameras, teleop, data
+  collection, client) plus rviz/image windows to check what the policy sees; the Oopsie client's
+  UI did this for one policy family and one dataset format only.
+- **Solution:** `pixi run studio` (`studio/`, config in `config/studio.yaml`, projects in
+  `projects/`). Built around a gym-style `SceneEnv` created from the policy client config, so the
+  3D viewer (viser) shows exactly the observation a policy gets. Policies, datasets/tasks,
+  conversion and training configs are per project. The data collector node is unchanged; the
+  studio files its episodes into `<data_root>/<dataset>/<task>/`.
+- **Finding:** with Fast DDS, a BEST_EFFORT subscriber received 0 of 50 `RigSnapshot` messages
+  (~5 MB) that a RELIABLE subscriber got. franka_client's RobiClient subscribes BEST_EFFORT, so its
+  image features may never arrive on this RMW. The studio adapts the reliability to the
+  publishers; RobiClient was not changed.
+
 ### 2026-09-01
 
 #### pinocchio 4.0.0 broke the build (env drifted from the lock)

@@ -18,6 +18,7 @@
     - [1.3.3. Data Collection](#133-data-collection)
     - [1.3.4. Running a Policy](#134-running-a-policy)
     - [1.3.5. Running in Simulation](#135-running-in-simulation)
+    - [1.3.6. Franka Studio (Web UI)](#136-franka-studio-web-ui)
   - [1.4. Advanced Usage](#14-advanced-usage)
     - [1.4.1. Environments](#141-environments)
     - [1.4.2. Additional Tasks](#142-additional-tasks)
@@ -211,6 +212,25 @@ Then launch as usual with `pixi run robot`.
 
 > [!NOTE]
 > Teleoperation still requires the physical Quest setup — `pixi run teleop` does not run in simulation.
+
+### 1.3.6. Franka Studio (Web UI)
+One browser page for the tasks above: start/stop robot, cameras, teleop and the data collector, load and run a
+project's policies (vision or vision+language with a prompt), record demos or DAgger corrections into a dataset/task,
+copy + convert data and start trainings on the cluster, and a 3D view of exactly what the policy sees.
+```bash
+pixi run studio   # http://localhost:8090
+```
+Projects live in [`projects/`](projects/) (start from `projects/example/`), settings in
+[`config/studio.yaml`](config/studio.yaml). See [`studio/README.md`](studio/README.md).
+
+**Point clouds.** Fast-FoundationStereo runs on the Jetson for every rig camera and publishes one
+merged cloud (`/ffs/points`); switch it on in the studio's *Observation space* card or run
+`pixi run pointcloud` (cameras with `jetson.stereo: true`, see [`config/cameras.yaml`](config/cameras.yaml)).
+One-time setup of the Jetson from the PC: `bash ../Fast-FoundationStereo/jetson/setup_from_pc.sh`
+(see `jetson/README.md` there).
+Camera extrinsics (both wrist mounts, the left robot's base, the static `zed_middle`) come from an
+ArUco grid board on the table: `pixi run calibrate-board` (see
+[`scripts/python/board_calibration.py`](scripts/python/board_calibration.py)).
 
 ---
 
