@@ -42,9 +42,19 @@ clean = "rm -rf build install log"
 clean-build = [{ task = "clean" }, { task = "build" }]
 robot = "bash scripts/run_robot.sh"
 teleop = "bash scripts/run_teleop.sh"
+cameras = "bash scripts/run_cameras.sh"
+pointcloud = "bash scripts/run_pointcloud.sh"
+calibrate-board = "python scripts/python/board_calibration.py"   # ArUco board: wrist mounts, left base, static cameras
 client = "bash scripts/run_client.sh"
 data-collection = "bash scripts/run_data_collection.sh"
 launch = { depends-on = ["robot", "teleop", "data-collection", "client"] }
+studio_raw = { cmd = "python -m franka_studio", cwd = "studio" }
+studio = [{ task = "studio_raw", environment = "humble" }]
+studio-debug_raw = { cmd = "python -m franka_studio --debug", cwd = "studio" }
+studio-debug = [{ task = "studio-debug_raw", environment = "humble" }]
+# ROS's launch_testing pytest plugin does not load with this pytest, hence no plugin autoload
+studio-test_raw = { cmd = "pytest studio/tests -q -p no:cacheprovider", env = { PYTEST_DISABLE_PLUGIN_AUTOLOAD = "1" } }
+studio-test = [{ task = "studio-test_raw", environment = "humble" }]
 
 
 [target.linux.dependencies]
