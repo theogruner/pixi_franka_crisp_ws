@@ -17,6 +17,14 @@ else
     fi
 fi
 
+# Fast DDS profile: whitelist loopback + the camera link so the multi-homed PC does not
+# announce unreachable locators (docker0 etc.) that black-hole Jetson->PC image data
+# (topics visible, no messages). See the comment in config/fastdds_pc.xml.
+FASTDDS_PC_PROFILE="${PIXI_PROJECT_ROOT:-$(pwd)}/config/fastdds_pc.xml"
+if [ -f "$FASTDDS_PC_PROFILE" ]; then
+    export FASTRTPS_DEFAULT_PROFILES_FILE="$FASTDDS_PC_PROFILE"
+fi
+
 WORKSPACE_SETUP="${PIXI_PROJECT_ROOT:-$(pwd)}/install/setup.bash"
 if [ -f "$WORKSPACE_SETUP" ]; then
     . "$WORKSPACE_SETUP"

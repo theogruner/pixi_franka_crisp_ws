@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# USE_RVIZ=true pixi run robot  -> also start rviz2 (off by default; Franka Studio has a 3D view)
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 OVERRIDES_FILE="$ROOT_DIR/config/robot_overrides.yaml"
 
@@ -26,18 +27,27 @@ if [ "$use_fake_hardware" = false ]; then
     [ "$spawn_franka_right" = true ] && [ "$gripper_type_right" = rh_p12_rn_a ] && check_gripper right
 fi
 
-if ! command -v tmux &> /dev/null
+# ROBOT_NO_TMUX=1 (set by Franka Studio) keeps both launches attached to this process, so
+# whoever started the script can stream their output and stop them with one signal.
+if [ -n "${ROBOT_NO_TMUX:-}" ] || ! command -v tmux &> /dev/null
 then
-    echo "tmux is not installed. Running commands in background instead."
-    ros2 launch franka_launch example.launch.py spawn_franka_left:=$spawn_franka_left spawn_franka_right:=$spawn_franka_right use_fake_hardware:=$use_fake_hardware overrides_file:=$OVERRIDES_FILE &
+    [ -z "${ROBOT_NO_TMUX:-}" ] && echo "tmux is not installed. Running commands in background instead."
+    pids=()
+    ros2 launch franka_launch example.launch.py spawn_franka_left:=$spawn_franka_left spawn_franka_right:=$spawn_franka_right use_fake_hardware:=$use_fake_hardware use_rviz:=${USE_RVIZ:-false} overrides_file:=$OVERRIDES_FILE &
+    pids+=($!)
     ros2 launch robot_ik_layer start_ijk.launch.py spawn_franka_left:=$spawn_franka_left spawn_franka_right:=$spawn_franka_right bypass_safety:=$bypass_safety overrides_file:=$OVERRIDES_FILE &
+    pids+=($!)
+    # Background jobs of a script ignore SIGINT, so forward a stop as SIGTERM (ros2 launch
+    # shuts its nodes down cleanly on it).
+    trap 'kill -TERM "${pids[@]}" 2>/dev/null' INT TERM
+    wait
     wait
     exit 0
 fi
 
 # Use tmux to open multiple terminals side-by-side
 SESSION="robot_run"
-tmux new-session -d -s $SESSION "pixi run -e humble ros2 launch franka_launch example.launch.py spawn_franka_left:=$spawn_franka_left spawn_franka_right:=$spawn_franka_right use_fake_hardware:=$use_fake_hardware overrides_file:=$OVERRIDES_FILE ; exec bash"
+tmux new-session -d -s $SESSION "pixi run -e humble ros2 launch franka_launch example.launch.py spawn_franka_left:=$spawn_franka_left spawn_franka_right:=$spawn_franka_right use_fake_hardware:=$use_fake_hardware use_rviz:=${USE_RVIZ:-false} overrides_file:=$OVERRIDES_FILE ; exec bash"
 tmux split-window -v -t $SESSION "pixi run -e humble ros2 launch robot_ik_layer start_ijk.launch.py spawn_franka_left:=$spawn_franka_left spawn_franka_right:=$spawn_franka_right bypass_safety:=$bypass_safety overrides_file:=$OVERRIDES_FILE ; exec bash"
 
 echo "Started robot launch nodes in a tmux session."

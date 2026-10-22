@@ -49,6 +49,7 @@ while IFS='|' read -r name url branch rev flags; do
     [ -z "$name" ] && continue
     # A fresh clone leaves an empty dir per gitlink, so test the checkout, not the dir.
     [ -e "$SRC_DIR/$name/.git" ] && continue      # already checked out, no need to probe
+    [ -e "$SRC_DIR/franka_ros2/$name/.git" ] && continue   # nested in the franka_ros2 bundle
     if ! git ls-remote --exit-code "$url" HEAD >/dev/null 2>&1; then
         case ",$flags," in
             *,optional,*) echo "Note: optional repo '$name' is unreachable, skipping it." ;;
