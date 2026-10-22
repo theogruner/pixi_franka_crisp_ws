@@ -8,3 +8,6 @@ build
 /src/franka_ros2/
 __pycache__/
 pixi.lock
+
+# franka studio runtime state
+.studio/
