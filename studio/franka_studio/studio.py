@@ -11,6 +11,11 @@ Observation space: the project env only carries the modalities switched on (``mo
 env.yaml, see modalities.py); switching one rebuilds it, starts/stops the component producing it
 (e.g. the point cloud on the Jetson) and changes what the data collector records next to its
 fixed topics.
+
+Stop / Resume: ``halt()`` publishes the latched ``/robot_halt`` the safety nodes hold the arms on
+(every input ignored: teleop, policy, homing, calibration, scripts) and stops the studio's own
+motion sources; ``resume()`` releases it (the safety nodes first re-target the IK at the held
+pose). Running a policy resumes by itself.
 """
 
 from __future__ import annotations
@@ -35,6 +40,10 @@ from franka_studio.ros import registry
 from franka_studio.state import UiState
 
 log = logging.getLogger(__name__)
+
+
+def _ok_msg(result: dict) -> tuple[bool, str]:
+    return bool(result.get("ok")), str(result.get("message", ""))
 
 
 def _start_ros2_daemon() -> None:
@@ -93,6 +102,12 @@ class Studio:
         self._last_record = None
         self._datasets_saved = 0
         self._alive = True
+        from std_msgs.msg import Bool
+        self._Bool = Bool
+        self._halt_pub = self.ros.publisher(Bool, "/robot_halt", latched=True)
+        self.halted = False
+        from franka_studio.calibration import AutoCalibration
+        self.calibration = AutoCalibration(self.ros, cfg["calibration"], self._save_static_pose, self.notify)
 
         _start_ros2_daemon()
         projects = self.projects()
@@ -133,6 +148,23 @@ class Studio:
 
     def start_component(self, name: str) -> dict:
         return self._result(*self.processes.start(name))
+
+    def restart_component(self, name: str) -> dict:
+        """Stop, wait until its whole process group is gone, start (e.g. robots after a calibration)."""
+        proc = self.processes.get(name)
+        if proc is None:
+            return self._result(False, f"Unknown component {name!r}.")
+
+        def work() -> None:
+            self.processes.stop(name)
+            deadline = time.time() + 30.0
+            while proc.alive and time.time() < deadline:
+                time.sleep(0.3)
+            ok, msg = self.processes.start(name)
+            self.notify(msg if ok else f"Restart of {name} failed: {msg}", "success" if ok else "error")
+
+        threading.Thread(target=work, daemon=True, name=f"restart-{name}").start()
+        return self._result(True, f"Restarting {proc.spec.label}…")
 
     def stop_component(self, name: str) -> dict:
         if name == self.cfg["data_collector"]["component"] and self.collection.recording:
@@ -360,8 +392,12 @@ class Studio:
             return self._result(False, "Load a policy first.")
         if self.collection.recording:
             return self._result(False, "Stop the recording before running the policy.")
+        if self.calibration.state == "running":
+            return self._result(False, "A camera calibration is running.")
         if self.active_env is not None:
             self.active_env.stop_home()   # both would drive the joints
+        if self.halted:
+            self.resume()                 # Run releases a Stop
         ok, msg = self.runner.run(prompt)
         if ok and self.project:
             self.state.set_project(self.project.id, prompt=prompt)
@@ -375,12 +411,60 @@ class Studio:
         return self._result(*self.runner.stop())
 
     def home(self) -> dict:
+        if self.halted:
+            return self._result(False, "Halted: press Resume first.")
         if self.runner and self.runner.running:
             self.runner.stop()
         env = self.active_env
         if env is None or not env.home():
             return self._result(False, "No home pose configured (home_pose in the policy/env config).")
         return self._result(True, env.home_message() or "Homing.")
+
+    # ---- stop / resume ---------------------------------------------------------------------------------
+
+    def halt(self) -> dict:
+        """Holds both arms (safety nodes) and stops policy, calibration and homing."""
+        self._halt_pub.publish(self._Bool(data=True))
+        self.halted = True
+        if self.runner and self.runner.running:
+            self.runner.stop()
+        self.calibration.stop("Stop pressed")
+        if self.active_env is not None:
+            self.active_env.stop_home()
+        self.notify("STOP: the arms hold where they are; teleop and all commands are ignored until Resume.", "warn")
+        return self._result(True, "Stopped.")
+
+    def resume(self) -> dict:
+        self._halt_pub.publish(self._Bool(data=False))
+        self.halted = False
+        return self._result(True, "Resumed: the arms accept commands again.")
+
+    # ---- camera calibration ----------------------------------------------------------------------------
+
+    def _save_static_pose(self, name: str, position: list, wxyz: list) -> str:
+        return self.save_camera_pose(name, [float(v) for v in position], [float(v) for v in wxyz])
+
+    def calibration_start(self, arms: object) -> dict:
+        if self.collection.recording:
+            return self._result(False, "Stop the recording first.")
+        if self.runner and self.runner.running:
+            self.runner.stop()
+        if self.active_env is not None:
+            self.active_env.stop_home()
+        arms = [a for a in (arms if isinstance(arms, list) else str(arms or "").split(",")) if a]
+        return self._result(*_ok_msg(self.calibration.start(arms or None)))
+
+    def calibration_watch(self, on: object) -> dict:
+        return self._result(*_ok_msg(self.calibration.watch(on)))
+
+    def calibration_save(self, name: str) -> dict:
+        return self._result(*_ok_msg(self.calibration.save(str(name or "").strip())))
+
+    def calibration_apply(self, name: str) -> dict:
+        result = self.calibration.apply(str(name or "").strip())
+        out = self._result(result["ok"], result["message"])
+        out["restart_robots"] = result.get("restart_robots", False)
+        return out
 
     # ---- data collection -----------------------------------------------------------------------------
 
@@ -536,6 +620,8 @@ class Studio:
             "jobs": self.cluster.snapshot(project.id) if project else [],
             "viewer": {"port": self.cfg["viewer"]["port"], "public_url": self.cfg["viewer"].get("public_url"),
                        "enabled": self.viewer is not None},
+            "halted": self.halted,
+            "calibration": self.calibration.snapshot(),
             "events": events,
         }
 

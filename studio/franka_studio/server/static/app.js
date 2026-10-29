@@ -94,6 +94,7 @@ function render(s) {
   renderObservation(s);
   renderRigCameras(s);
   renderCluster(s);
+  renderCalibration(s);
   renderViewer(s);
   for (const e of s.events || []) if (e.t > PAGE_T0 - 1) toast(e.text, e.level);
 }
@@ -107,8 +108,12 @@ function renderTop(s) {
   const chip = $("#mode-chip");
   const rec = s.collection.recording;
   const running = s.policy?.state === "running";
-  chip.className = "chip " + (rec ? "recording" : running ? "running" : "");
-  $("#mode-text").textContent = rec ? `recording${s.policy ? " · DAgger" : ""}` : running ? "policy running" : s.loading ? "loading policy…" : s.policy ? "policy ready" : "idle";
+  const calib = s.calibration?.state === "running";
+  chip.className = "chip " + (s.halted ? "halted" : rec ? "recording" : running || calib ? "running" : "");
+  $("#mode-text").textContent = s.halted ? "STOPPED · resume to continue" : rec ? `recording${s.policy ? " · DAgger" : ""}` : calib ? "calibrating cameras" : running ? "policy running" : s.loading ? "loading policy…" : s.policy ? "policy ready" : "idle";
+  $("#resume-btn").hidden = !s.halted;
+  $("#home-top-btn").disabled = !!s.halted;
+  document.body.classList.toggle("is-halted", !!s.halted);
 }
 
 function renderComponents(s) {
@@ -506,6 +511,55 @@ function renderCluster(s) {
 
 // ---- viewer
 
+// ---- camera calibration
+
+function renderCalibration(s) {
+  const c = s.calibration;
+  if (!c) return;
+  const watch = $("#calib-watch");
+  if (document.activeElement !== watch) watch.checked = c.watching;
+  const vis = c.visibility || {};
+  $("#calib-vis").innerHTML = Object.entries(vis).map(([cam, n]) => {
+    const cls = n == null ? "" : n >= 4 ? "seen" : "none";
+    const txt = n == null ? (c.watching || c.state === "running" ? "…" : "off") : `${n} markers`;
+    return `<span class="cam-chip ${cls}" title="${esc(cam)}">${esc(cam.replace("zed_", ""))} · ${txt}</span>`;
+  }).join("");
+  const arms = Object.keys(c.arms || {});
+  if (changed("calib-arms", arms)) {
+    $("#calib-arms").innerHTML = arms.map((a) => `<label><input type="checkbox" value="${esc(a)}" checked>${esc(a.replace("zed_", ""))}</label>`).join("");
+  }
+  const runningCal = c.state === "running";
+  $("#calib-start").disabled = runningCal || s.halted;
+  $("#calib-start").title = s.halted ? "Resume first" : runningCal ? "Running — Stop aborts it" : "Probe and drive to the views with the checked arms, one after the other";
+  const prog = $("#calib-progress");
+  prog.hidden = !(c.progress || []).length;
+  if (!prog.hidden && changed("calib-prog", [c.state, c.phase, c.progress])) {
+    prog.innerHTML = `<div class="phase ${esc(c.state)}">${esc(c.state === "running" ? c.phase : c.state)}</div>${esc((c.progress || []).join("\n"))}`;
+    prog.scrollTop = prog.scrollHeight;
+  }
+  const res = $("#calib-result");
+  res.hidden = !c.result;
+  $("#calib-save-row").hidden = !c.result;
+  if (c.result && changed("calib-res", c.result)) {
+    const r = c.result;
+    const rows = Object.entries(r.rms).map(([cam, v]) => {
+      const before = r.rms_before?.[cam];
+      return `<span>${esc(cam)}</span><span class="${v < 2 ? "good" : "bad"}">${v.toFixed(2)} px${before != null ? ` <span class="muted">(was ${before.toFixed(1)})</span>` : ""}</span>`;
+    }).join("");
+    const robots = Object.entries(r.values?.robots || {}).map(([robot, vals]) =>
+      `<span>${esc(robot)}</span><span class="muted">${esc(Object.keys(vals).some((k) => k.startsWith("cam_")) ? "camera mount" : "")}${vals.xyz ? (Object.keys(vals).length > 2 ? " + base" : "base") : ""}</span>`).join("");
+    const statics = Object.keys(r.values?.static || {}).map((cam) => `<span>${esc(cam)}</span><span class="muted">pose</span>`).join("");
+    res.innerHTML = `<span class="head">Reprojection error</span>${rows}<span class="head">Changes when applied</span>${robots}${statics}`;
+  }
+  const saved = c.saved || [];
+  if (changed("calib-saved", saved.map((x) => x.name))) {
+    $("#calib-saved").innerHTML = saved.length
+      ? saved.map((x) => `<option value="${esc(x.name)}">${esc(x.name)}${x.created ? ` · ${esc(x.created.replace("T", " ").slice(0, 16))}` : ""}</option>`).join("")
+      : `<option value="">(none yet)</option>`;
+  }
+  $("#calib-apply").disabled = !saved.length || runningCal;
+}
+
 function viewerUrl(s) {
   return s.viewer.public_url || `${location.protocol}//${location.hostname}:${s.viewer.port}`;
 }
@@ -560,6 +614,31 @@ function wire() {
   $("#run-btn").onclick = () => post("policy/run", { prompt: $("#prompt").value });
   $("#stop-btn").onclick = () => post("policy/stop");
   $("#home-btn").onclick = () => post("home");
+  $("#home-top-btn").onclick = () => post("home");
+  $("#halt-btn").onclick = () => post("halt");
+  $("#resume-btn").onclick = () => post("resume");
+  $("#calib-watch").onchange = (e) => post("calibration/watch", { on: e.target.checked });
+  $("#calib-start").onclick = () => {
+    const arms = [...$("#calib-arms").querySelectorAll("input:checked")].map((i) => i.value);
+    if (!arms.length) { toast("Check at least one arm.", "warn", true); return; }
+    if (!confirm(`The ${arms.join(" and ")} will move on its own around the board (slowly, within 20 cm of its start pose).\n\nKeep the area clear and the Stop button in reach.`)) return;
+    post("calibration/start", { arms });
+  };
+  $("#calib-save").onclick = async () => {
+    const r = await post("calibration/save", { name: $("#calib-name").value.trim() });
+    if (r.ok) toast(r.message, "success", true);
+  };
+  $("#calib-apply").onclick = async () => {
+    const name = $("#calib-saved").value;
+    if (!name || !confirm(`Apply calibration '${name}'? It overwrites the camera mounts / bases in the robot configs and the project's camera poses.`)) return;
+    const r = await post("calibration/apply", { name });
+    if (r.ok) { toast(r.message, "success", true); $("#calib-restart").hidden = !r.restart_robots; }
+  };
+  $("#calib-restart").onclick = async () => {
+    if (!confirm("Restart the robots now? Both arms stop and come back with the new description.")) return;
+    await post("component/restart", { name: "robot" });
+    $("#calib-restart").hidden = true;
+  };
   $("#prompt").onkeydown = (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) $("#run-btn").click(); };
 
   for (const id of ["#dataset", "#task", "#instruction"]) $(id).onchange = rememberSelection;
@@ -589,10 +668,10 @@ function wire() {
   $("#viewer-reload").onclick = () => { const f = $("#viewer-frame"); if (f.src) f.src = f.src; };
   $("#viewer-full").onclick = () => $("#viewer").requestFullscreen?.();
 
-  // keyboard: space = stop policy (safety), r = record toggle when not typing
+  // keyboard: space = Stop (holds the arms: policy, teleop, homing, calibration), when not typing
   document.addEventListener("keydown", (e) => {
     if (["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName)) return;
-    if (e.code === "Space" && ui.status?.policy?.state === "running") { e.preventDefault(); post("policy/stop"); }
+    if (e.code === "Space") { e.preventDefault(); post("halt"); }
   });
 }
 

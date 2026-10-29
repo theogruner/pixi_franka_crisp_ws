@@ -27,8 +27,17 @@ def _json(data: object) -> web.Response:
     return web.json_response(data, dumps=functools.partial(json.dumps, default=str))
 
 
+@web.middleware
+async def revalidate_static(request: web.Request, handler: object) -> web.StreamResponse:
+    """Browsers must revalidate app.js / app.css, or they keep running an old UI after an update."""
+    response = await handler(request)
+    if request.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 def build_app(studio: Studio) -> web.Application:
-    app = web.Application(client_max_size=4 * 1024 * 1024)
+    app = web.Application(client_max_size=4 * 1024 * 1024, middlewares=[revalidate_static])
 
     async def call(fn: object, *args: object) -> object:
         return await asyncio.get_running_loop().run_in_executor(None, fn, *args)
@@ -53,6 +62,14 @@ def build_app(studio: Studio) -> web.Application:
         "cluster/refresh": (studio.refresh_jobs, []),
         "modality": (studio.set_modality, ["id", "on"]),
         "camera/save": (studio.save_camera_pose, ["name", "position", "wxyz"]),   # board_calibration.py
+        "component/restart": (studio.restart_component, ["name"]),
+        "halt": (studio.halt, []),
+        "resume": (studio.resume, []),
+        "calibration/watch": (studio.calibration_watch, ["on"]),
+        "calibration/start": (studio.calibration_start, ["arms"]),
+        "calibration/stop": (studio.halt, []),          # stopping a calibration is a Stop
+        "calibration/save": (studio.calibration_save, ["name"]),
+        "calibration/apply": (studio.calibration_apply, ["name"]),
     }
 
     async def action(request: web.Request) -> web.Response:
@@ -152,8 +169,13 @@ def build_app(studio: Studio) -> web.Application:
             task.cancel()
         return ws
 
-    async def index(request: web.Request) -> web.FileResponse:
-        return web.FileResponse(STATIC_DIR / "index.html", headers={"Cache-Control": "no-cache"})
+    async def index(request: web.Request) -> web.Response:
+        # Versioned asset URLs: a changed app.js / app.css is a new URL, so no browser keeps the old one.
+        html = (STATIC_DIR / "index.html").read_text()
+        for name in ("app.js", "app.css"):
+            version = int((STATIC_DIR / name).stat().st_mtime)
+            html = html.replace(f'"/static/{name}"', f'"/static/{name}?v={version}"')
+        return web.Response(text=html, content_type="text/html", headers={"Cache-Control": "no-cache"})
 
     app.router.add_get("/", index)
     app.router.add_get("/api/status", status)

@@ -344,8 +344,12 @@ def rotation_spread(flanges: list[np.ndarray]) -> float:
 
 
 class Problem:
-    def __init__(self, data: dict, board: Board) -> None:
+    def __init__(self, data: dict, board: Board, reference_robot: str = REFERENCE_ROBOT,
+                 min_samples: int = MIN_SAMPLES, min_spread_deg: float = MIN_SPREAD_DEG) -> None:
+        """``reference_robot``: its base defines the world (the others' bases are corrected);
+        ``min_samples`` / ``min_spread_deg``: wrist views and rotation spread to solve a mount."""
         self.board = board
+        self.reference = reference_robot
         self.frames = {cam: {k: (np.asarray(v) if v is not None and k != "robot" else v) for k, v in f.items()}
                        for cam, f in data["robot_frames"].items()}
         self.obs = observations(data, board)
@@ -357,16 +361,16 @@ class Problem:
         # Which mounts / bases the captures can tell apart from the board pose
         self.spread = {c: rotation_spread([o["flange"] for o in self.obs if o["cam"] == c]) for c in wrists}
         self.count = {c: sum(o["cam"] == c for o in self.obs) for c in wrists}
-        self.free_mount = [c for c in wrists if self.count[c] >= MIN_SAMPLES and self.spread[c] >= MIN_SPREAD_DEG]
-        self.free_base = [c for c in self.free_mount if self.frames[c]["robot"] != REFERENCE_ROBOT
+        self.free_mount = [c for c in wrists if self.count[c] >= min_samples and self.spread[c] >= min_spread_deg]
+        self.free_base = [c for c in self.free_mount if self.frames[c]["robot"] != reference_robot
                           and any(w != c for w in wrists)]
         # A wrist of another robot only pulls on the board once its base is solved; until then its
         # detections are just evaluated (their error is the misalignment against the reference).
         for o in self.obs:
-            o["used"] = (o["flange"] is None or self.frames[o["cam"]]["robot"] == REFERENCE_ROBOT
+            o["used"] = (o["flange"] is None or self.frames[o["cam"]]["robot"] == reference_robot
                          or o["cam"] in self.free_base)
         if not any(o["used"] and o["flange"] is not None for o in self.obs):
-            raise RuntimeError(f"no camera of {REFERENCE_ROBOT} saw the board: nothing ties it to the world")
+            raise RuntimeError(f"no camera of {reference_robot} saw the board: nothing ties it to the world")
         self.blocks = (["B"] + [f"M:{c}" for c in self.static] + [f"C:{c}" for c in self.free_mount]
                        + [f"D:{c}" for c in self.free_base])
         self.x0 = self._initial()
@@ -377,14 +381,42 @@ class Problem:
         D = x.get(f"D:{cam}", np.eye(4))
         return D @ flange @ C @ self.frames[cam]["optical"]
 
+    def _hand_eye(self, cam: str) -> np.ndarray | None:
+        """link8 <- camera from this camera's views alone (Park & Martin): independent of the
+        mount in the robot description, which can be far off for a new holder."""
+        obs = [o for o in self.obs if o["cam"] == cam]
+        if len(obs) < 3:
+            return None
+        Rg, tg, Rc, tc = [], [], [], []
+        for o in obs:
+            T = self._pnp(o)
+            Rg.append(o["flange"][:3, :3]); tg.append(o["flange"][:3, 3])
+            Rc.append(T[:3, :3]); tc.append(T[:3, 3])
+        try:
+            R, tvec = cv2.calibrateHandEye(Rg, tg, Rc, tc, method=cv2.CALIB_HAND_EYE_PARK)
+        except cv2.error:
+            return None
+        X = np.eye(4)
+        X[:3, :3], X[:3, 3] = R, np.asarray(tvec).ravel()
+        return X if np.all(np.isfinite(X)) else None
+
     def _initial(self) -> np.ndarray:
+        x: dict = {}
+        for c in self.free_mount:   # mount corrections start from the hand-eye solution
+            X = self._hand_eye(c)
+            if X is not None:
+                x[f"C:{c}"] = X @ np.linalg.inv(self.frames[c]["optical"])
         boards = []
         for o in self.obs:
-            if o["flange"] is not None and o["used"]:
-                boards.append(self.wrist_pose(o["cam"], o["flange"]) @ self._pnp(o))
+            if o["flange"] is not None and o["used"] and o["cam"] not in self.free_base:
+                boards.append(self.wrist_pose(o["cam"], o["flange"], x) @ self._pnp(o))
         B = boards[0].copy()
         B[:3, 3] = np.mean([b[:3, 3] for b in boards], axis=0)
-        x = {"B": B}
+        x["B"] = B
+        for c in self.free_base:    # base corrections: where that arm puts the board vs. B
+            o = next(o for o in self.obs if o["cam"] == c)
+            seen = self.wrist_pose(c, o["flange"], x) @ self._pnp(o)
+            x[f"D:{c}"] = B @ np.linalg.inv(seen)
         for c in self.static:
             o = next(o for o in self.obs if o["cam"] == c)
             x[f"M:{c}"] = B @ np.linalg.inv(self._pnp(o))
@@ -480,13 +512,51 @@ def save_static(name: str, pose: dict, project: str | None) -> str:
 
 # ---- report --------------------------------------------------------------------------------------
 
+MOUNT_KEYS = ("cam_pos_x", "cam_pos_y", "cam_pos_z", "cam_roll", "cam_pitch", "cam_yaw")
+
+
+def calibration_values(problem: Problem, result: dict) -> dict:
+    """What a solution changes, as absolute values (the current corrections, which TF includes,
+    are folded in, so a stored calibration can be applied again later):
+    {"static": {camera: {position, wxyz}}, "robots": {robot: {cam_pos_x.., xyz, rpy: str}}, "notes": []}."""
+    x = result["x"]
+    out: dict = {"static": {}, "robots": {}, "notes": []}
+    for c in problem.static:
+        out["static"][c] = pose_dict(x[f"M:{c}"])
+    for c in problem.free_mount:
+        f = problem.frames[c]
+        if f["mount"] is None:
+            out["notes"].append(f"{c}: no TF of the mount frame (older description); the value assumes no correction")
+        xyz, rpy = xyz_rpy(x[f"C:{c}"] @ (f["mount"] if f["mount"] is not None else np.eye(4)))
+        out["robots"].setdefault(f["robot"], {}).update(zip(MOUNT_KEYS, [f"{v:.6f}" for v in xyz + rpy]))
+    for c in problem.free_base:
+        f = problem.frames[c]
+        if f["base"] is None:
+            out["notes"].append(f"{f['robot']}: no TF world <- link0, base correction not stored")
+            continue
+        xyz, rpy = xyz_rpy(x[f"D:{c}"] @ f["base"])
+        out["robots"].setdefault(f["robot"], {}).update(
+            {"xyz": " ".join(f"{v:.6f}" for v in xyz), "rpy": " ".join(f"{v:.6f}" for v in rpy)})
+    return out
+
+
+def write_robot_values(robots: dict) -> list[Path]:
+    """Writes {robot: {key: value}} into src/franka_launch/config/dfki_fr3_<side>.yaml (restart the robots)."""
+    paths = []
+    for robot, values in (robots or {}).items():
+        path = Path(str(LAUNCH_CONFIG).format(side=robot.split("_")[-1]))
+        set_yaml_keys(path, {k: str(v) for k, v in values.items()})
+        paths.append(path)
+    return paths
+
+
 def report(problem: Problem, result: dict, rms0: dict, rms: dict, write: bool, project: str | None) -> None:
     x, std = result["x"], result["std"]
     print(f"\nboard {problem.board.marker * 1e3:.1f} mm markers, {problem.board.sep * 1e3:.1f} mm gaps; "
           f"{len(problem.obs)} detections")
     for c in problem.cams:
         fitted = "" if any(o["used"] for o in problem.obs if o["cam"] == c) else \
-            f"  not fitted (its base is not solved): its error against {REFERENCE_ROBOT}"
+            f"  not fitted (its base is not solved): its error against {problem.reference}"
         print(f"  {c:16s} reprojection {rms0[c]:5.2f} -> {rms[c]:5.2f} px   "
               f"({sum(o['cam'] == c for o in problem.obs)} views){fitted}")
     for c in problem.spread:
@@ -511,44 +581,28 @@ def report(problem: Problem, result: dict, rms0: dict, rms: dict, write: bool, p
     print(f"  board centre in world {np.round((B @ centre)[:3], 4).tolist()}  "
           f"(+-{std['B'][0]:.2f} deg, {std['B'][1]:.1f} mm), "
           f"{np.degrees(np.arccos(abs(B[2, 2]))):.1f} deg from horizontal (lying on the table: ~0)")
+    values = calibration_values(problem, result)
     for c in problem.static:
-        M = x[f"M:{c}"]
-        print(f"  {c}: {pose_dict(M)}  (+-{std[f'M:{c}'][0]:.2f} deg, {std[f'M:{c}'][1]:.1f} mm)")
+        print(f"  {c}: {values['static'][c]}  (+-{std[f'M:{c}'][0]:.2f} deg, {std[f'M:{c}'][1]:.1f} mm)")
         if write:
-            print("    " + save_static(c, pose_dict(M), project))
+            print("    " + save_static(c, values["static"][c], project))
     for c in problem.free_mount:
-        f = problem.frames[c]
-        C = x[f"C:{c}"] @ (f["mount"] if f["mount"] is not None else np.eye(4))
-        xyz, rpy = xyz_rpy(C)
         delta = x[f"C:{c}"]
         print(f"  {c} mount correction: {1e3 * np.linalg.norm(delta[:3, 3]):.1f} mm, {angle_deg(delta[:3, :3]):.2f} deg "
               f"(+-{std[f'C:{c}'][0]:.2f} deg, {std[f'C:{c}'][1]:.1f} mm)")
-        if f["mount"] is None:
-            print("    (no TF of the mount frame: the robot runs an older description; the value assumes none)")
-        values = dict(zip(["cam_pos_x", "cam_pos_y", "cam_pos_z", "cam_roll", "cam_pitch", "cam_yaw"],
-                          [f"{v:.6f}" for v in xyz + rpy]))
-        print("    " + ", ".join(f"{k}: {v}" for k, v in values.items()))
-        if write:
-            path = Path(str(LAUNCH_CONFIG).format(side=f["robot"].split("_")[-1]))
-            set_yaml_keys(path, values)
-            print(f"    wrote {path.relative_to(WS)}")
     for c in problem.free_base:
-        f = problem.frames[c]
         D = x[f"D:{c}"]
-        print(f"  {f['robot']} base correction: {1e3 * np.linalg.norm(D[:3, 3]):.1f} mm, {angle_deg(D[:3, :3]):.2f} deg "
-              f"(+-{std[f'D:{c}'][0]:.2f} deg, {std[f'D:{c}'][1]:.1f} mm)")
-        if f["base"] is None:
-            print("    (no TF world <- link0: not written)")
-            continue
-        xyz, rpy = xyz_rpy(D @ f["base"])
-        values = {"xyz": " ".join(f"{v:.6f}" for v in xyz), "rpy": " ".join(f"{v:.6f}" for v in rpy)}
-        print("    " + ", ".join(f'{k}: "{v}"' for k, v in values.items()))
-        if write:
-            path = Path(str(LAUNCH_CONFIG).format(side=f["robot"].split("_")[-1]))
-            set_yaml_keys(path, values)
+        print(f"  {problem.frames[c]['robot']} base correction: {1e3 * np.linalg.norm(D[:3, 3]):.1f} mm, "
+              f"{angle_deg(D[:3, :3]):.2f} deg (+-{std[f'D:{c}'][0]:.2f} deg, {std[f'D:{c}'][1]:.1f} mm)")
+    for robot, vals in values["robots"].items():
+        print(f"  {robot}: " + ", ".join(f'{k}: "{v}"' for k, v in vals.items()))
+    for note in values["notes"]:
+        print(f"    ({note})")
+    if write:
+        for path in write_robot_values(values["robots"]):
             print(f"    wrote {path.relative_to(WS)}")
-    if write and (problem.free_mount or problem.free_base):
-        print("  restart the robots (Robots component) to load the new description")
+        if values["robots"]:
+            print("  restart the robots (Robots component) to load the new description")
 
 
 # ---- main ----------------------------------------------------------------------------------------

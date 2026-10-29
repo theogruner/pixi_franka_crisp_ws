@@ -120,6 +120,30 @@ repeat to refine) and press *Save pose to project*. The pose is stored in
 in `env.yaml` works too). *Camera image size* in *Display* scales the frustums; the page's
 camera strips have their own size slider.
 
+### Stop / Resume
+
+**Stop** (top bar, or Space while not typing) publishes the latched `/robot_halt`: both safety nodes
+(`robot_safety_layer`) freeze their joint command and ignore every input -- teleop, policy, joint
+homing, the calibration, scripts -- and the studio stops its own runner, calibration and homing.
+**Resume** releases it; the safety nodes first re-target the IK at the held pose, and the teleop has
+kept re-anchoring meanwhile, so nothing drives back to an old target. *Run policy* resumes by itself,
+*Home* and *Calibrate* refuse while stopped. The halt stays in the safety nodes if the studio dies.
+
+### Camera calibration
+
+The *Camera calibration* card calibrates every camera that sees the ArUco board (settings:
+`calibration` in `config/studio.yaml`, defaults in `config.py`), wrist cameras on unknown holders
+included. Switch on *board* to see which cameras detect it, bring each arm (teleop) to a pose where
+its wrist camera sees the board, check the arms and press *Calibrate*. Per arm, one after the other:
+three small probe tilts about the grasp point, a first hand-eye estimate, then 8 planned views on a
+cap above the board (slow Cartesian targets through `target_pose`, within 20 cm / 45 deg of the start
+and 8 cm above the board), a capture at every still pose and back to the start. The solve is
+`scripts/python/board_calibration.py`'s bundle adjustment over all captures (mounts, the left base
+relative to the right, static cameras). *Save* stores the result by name in
+`config/calibrations/<name>.yaml` (captures next to it); *Apply* writes a saved one into
+`src/franka_launch/config/dfki_fr3_<side>.yaml` and the project's `camera_poses.yaml` -- then
+*Restart robots* to load the new description.
+
 ## Notes
 
 * `pixi run robot` runs its launches in tmux; the studio sets `ROBOT_NO_TMUX=1` so they stay in

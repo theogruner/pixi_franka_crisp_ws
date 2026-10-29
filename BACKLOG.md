@@ -38,6 +38,23 @@ Open tasks at the top, dated log of done/notable changes below. Newest first.
 
 ## Log
 
+### 2026-10-29
+
+#### Automatic camera calibration and a global Stop
+- **Problem:** New camera holders (wrist mounts unknown); calibrating by hand with teleop poses
+  is slow. No way to stop every motion source at once.
+- **Solution:**
+  - `robot_safety_layer`: latched `/robot_halt` (`std_msgs/Bool`): frozen joint command, all
+    inputs ignored, `target_pose` refused; on release the IK is re-targeted at the held pose
+    (`rh_p12_rn_grasp_point`). Teleop and `franka_client/joint_home.py` follow it too.
+  - Studio: Stop / Resume in the top bar (Space = Stop), *Camera calibration* card
+    (`studio/franka_studio/calibration.py`): probe, plan 8 views, capture, solve, save by name,
+    apply + restart robots.
+  - `board_calibration.py`: hand-eye (Park & Martin) start for free mounts -- synthetic sessions
+    recover mounts that are up to 150 deg off to <= 0.1 deg / < 1 mm; `Problem(reference_robot,
+    min_samples, min_spread_deg)`; `calibration_values` / `write_robot_values` shared with the CLI.
+- **Open:** Not run on the robots yet (the halt needs a robot restart with the rebuilt safety node).
+
 ### 2026-10-23
 
 #### Joint-space home

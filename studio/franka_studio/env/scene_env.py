@@ -163,6 +163,7 @@ class SceneEnv:
         self._home = [home] if isinstance(home, dict) else list(home or [])
         self._home_pubs = []
         self._joint_homes = []
+        self._home_notes: list[str] = []
         for h in self._home:
             # Arm namespace: ``ns``, or from the topic (/franka_right/target_pose -> franka_right)
             ns = h.get("ns") or (h.get("topic") or "").strip("/").split("/")[0]
@@ -174,8 +175,12 @@ class SceneEnv:
                     spec = load_home(ns, cfg if "home_joints" in cfg else None)
                     if spec is not None:
                         joint_home = JointHome(self.node, ns, spec, callback_group=ReentrantCallbackGroup())
+                    else:
+                        self._home_notes.append(f"{ns}: no home_joints (teleop_<side>.yaml of franka_meta_quest)")
                 except Exception as e:
                     log.warning("joint home of %s disabled: %s", ns, e)
+                    self._home_notes.append(f"{ns}: joint home disabled ({type(e).__name__}: {e})")
+                    self.warnings.append(self._home_notes[-1])
             self._joint_homes.append(joint_home)
             pose_pub = (self.node.create_publisher(PoseStamped, h["topic"], 1)
                         if h.get("topic") and joint_home is None else None)
@@ -290,7 +295,7 @@ class SceneEnv:
         return bool(running)
 
     def home_message(self) -> str:
-        return " ".join(j.message for j in self._joint_homes if j is not None and j.message)
+        return " ".join([j.message for j in self._joint_homes if j is not None and j.message] + self._home_notes)
 
     def missing(self) -> list[str]:
         with self._lock:

@@ -31,6 +31,22 @@ DEFAULTS: dict[str, Any] = {
         "node": "/data_collector",        # its extra_topics parameter: what the modalities add
     },
     "pointcloud_topics": {"status": "/ffs/status", "extrinsics": "/ffs/extrinsics", "align": "/ffs/align"},
+    # Automatic camera calibration (calibration.py): the board on the table, the cameras, motion limits
+    "calibration": {
+        "board": {"dict": "DICT_4X4_50", "cols": 3, "rows": 4, "first_id": 0, "marker": 0.0565, "sep": 0.0055},
+        "arms": {"zed_right_arm": "franka_right", "zed_left_arm": "franka_left"},   # wrist camera -> arm
+        "static": ["zed_middle"],
+        "topic_prefix": "/zed_multi",
+        "views": 8,                  # per arm, after 3 probes
+        "speed": 0.05,               # m/s of the grasp point
+        "rotation_speed_deg": 15.0,  # deg/s
+        "settle_s": 1.0,             # still time before each capture
+        "max_offset": 0.20,          # m from the start pose
+        "max_rotation_deg": 45.0,    # from the start orientation
+        "min_clearance": 0.08,       # m of the grasp point above the board
+        "min_distance": 0.30,        # m camera - board centre
+        "max_distance": 0.55,
+    },
 }
 
 

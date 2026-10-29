@@ -444,3 +444,33 @@ select { appearance: none; background-image: linear-gradient(45deg, transparent 
   .segmented { align-self: flex-start; height: 32px; }
   .record { flex-wrap: wrap; }
 }
+
+/* ---- Stop / Resume ---- */
+.btn-halt { background: linear-gradient(135deg, #e11d48, #f43f5e); color: #fff; font-weight: 700; letter-spacing: .04em;
+  box-shadow: 0 10px 24px -12px rgba(225, 29, 72, .95); height: 36px; padding: 0 16px; }
+.btn-halt:hover { filter: brightness(1.08); }
+.btn-resume { background: var(--ok-soft); color: var(--ok); border-color: var(--ok); height: 36px; padding: 0 14px; font-weight: 600; }
+.chip.halted { color: var(--danger); background: var(--danger-soft); }
+.chip.halted .dot { background: var(--danger); }
+body.is-halted .topbar { box-shadow: inset 0 -2px 0 var(--danger); }
+
+/* ---- Camera calibration ---- */
+.calib-vis { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.calib-vis .cam-chip { font-size: 12px; padding: 3px 9px; border-radius: 99px; background: var(--surface-3); color: var(--muted); border: 1px solid var(--border); }
+.calib-vis .cam-chip.seen { color: var(--ok); background: var(--ok-soft); border-color: transparent; }
+.calib-vis .cam-chip.none { color: var(--warn); background: var(--warn-soft); border-color: transparent; }
+.calib-arms { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 6px; font-size: 13px; }
+.calib-arms label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.calib-arms input { width: auto; }
+.calib-hint { margin: 6px 0 0; line-height: 1.45; }
+.calib-progress { margin-top: 12px; padding: 10px 12px; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--border);
+  font-family: "JetBrains Mono", monospace; font-size: 11.5px; line-height: 1.55; max-height: 190px; overflow: auto; white-space: pre-wrap; }
+.calib-progress .phase { font-family: Inter, sans-serif; font-size: 12.5px; font-weight: 600; margin-bottom: 4px; }
+.calib-progress .phase.failed, .calib-progress .phase.stopped { color: var(--danger); }
+.calib-progress .phase.done { color: var(--ok); }
+.calib-result { margin-top: 10px; display: grid; grid-template-columns: 1fr auto; gap: 3px 12px; font-size: 12.5px; }
+.calib-result .head { grid-column: 1 / -1; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; margin-top: 6px; }
+.calib-result .good { color: var(--ok); } .calib-result .bad { color: var(--warn); }
+.calib-save { display: flex; gap: 8px; margin-top: 10px; }
+.calib-save input, .calib-save select { flex: 1; min-width: 0; }
+.calib-restart { margin-top: 10px; width: 100%; }
