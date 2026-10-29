@@ -51,6 +51,20 @@ Open tasks at the top, dated log of done/notable changes below. Newest first.
   with `python -m franka_client.joint_home`). Used by teleop B (held), the studio's Home (project
   `home_pose` with `ns`; Stop aborts) and the clients' H. Cartesian home stays as fallback.
 
+#### Point cloud: steadier, faster, cleaner
+- **Problem:** The right view vanished every other refresh, ~1 Hz, speckle noise.
+- **Solution / findings (`../Fast-FoundationStereo/jetson/ffs_rig_node.py`):**
+  - `max_age` 0.35 -> 2 s: the cameras are processed one after the other (~0.3 s each), so the
+    right cloud was always just older than the limit; now each camera's last cloud stays.
+  - Raw image subscriptions (stamp read from the CDR header, only the used pair deserialized):
+    6 x 30 Hz images were all deserialized in Python. Per-stage timings in `/ffs/status`.
+  - GPU/CPU pipeline: a GPU thread runs the network camera after camera, a CPU thread projects /
+    filters meanwhile. All three views refresh every ~0.65 s (was ~1.15 s); a merged cloud goes
+    out after every camera (~4.5 Hz). Now GPU-bound: `disparity` ~220 ms per camera (engine alone
+    ~120 ms in the bench; the rest is preparation and sharing the GPU with the ZED wrapper).
+  - Density filter `support` (1 cm cells, >= 4 points of the same camera): removes speckle.
+- **Open:** faster engine (4 iterations and/or batch 3 and/or 320x224); tighter `crop` / `zfar`.
+
 ### 2026-10-22
 
 #### Point cloud observation (Fast-FoundationStereo on the Jetson)

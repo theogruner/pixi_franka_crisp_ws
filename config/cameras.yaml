@@ -23,7 +23,9 @@ jetson:
 # `pixi run pointcloud` (scripts/run_pointcloud.sh) or the studio's Point cloud component.
 pointcloud:
   repo: ~/Projects/Fast-FoundationStereo     # on the Jetson
-  engine: output/onnx_320x480/fast_foundationstereo.engine   # relative to repo
+  # GWC cost volume as the FFSGWCVolume TensorRT plugin: 72 ms per pair on the Orin instead of 121 ms
+  # (output/onnx_320x480: same model without the plugin; disparities equal to ~0.01 px)
+  engine: output/plugin_320x480/fast_foundationstereo.engine   # relative to repo
   rate: 10.0                  # Hz cap of the merged cloud
   topic: /ffs/points          # sensor_msgs/PointCloud2, x y z rgb, frame world_frame
   world_frame: world
@@ -31,6 +33,14 @@ pointcloud:
   crop: {min: [-0.4, -1.2, -0.05], max: [1.4, 1.2, 1.2]}   # world box around the workspace
   voxel: 0.005                # m
   max_points: 80000
+  # Each camera's last cloud stays in the merge until it is this old (the cameras are processed
+  # one after the other, ~0.3 s each, so a short limit dropped a view every other refresh).
+  max_age: 2.0                # s
+  # Noise: points with a disparity jump to a neighbour above edge_threshold (px) are flying pixels
+  # at depth edges; ``support`` drops points in 1 cm cells with fewer than min_points of the same
+  # camera (speckle). Raise min_points / lower zfar / tighten crop for a cleaner cloud.
+  edge_threshold: 1.0
+  support: {cell: 0.01, min_points: 4}
   # Cameras whose published images are turned by 180 deg relative to their optical frame in the
   # robot description (none: both wrist frames are right, see cam_image_flip in the URDF).
   flip_images: []
