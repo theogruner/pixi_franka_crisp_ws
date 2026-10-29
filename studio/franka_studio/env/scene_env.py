@@ -264,10 +264,12 @@ class SceneEnv:
 
     def home(self) -> bool:
         stamp = self.node.get_clock().now().to_msg()
-        for h, (pose_pub, grip_pub), joint_home in zip(self._home, self._home_pubs, self._joint_homes):
+        # Every arm first, so they move together (a gripper publish can block for seconds).
+        for joint_home in self._joint_homes:
             if joint_home is not None:
                 joint_home.start()
-            elif pose_pub is not None:
+        for h, (pose_pub, grip_pub), joint_home in zip(self._home, self._home_pubs, self._joint_homes):
+            if joint_home is None and pose_pub is not None:
                 msg = PoseStamped()
                 msg.header.stamp, msg.header.frame_id = stamp, h.get("frame_id", "world")
                 p = h.get("position", [0.3, 0.0, 0.5])

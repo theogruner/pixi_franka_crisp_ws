@@ -526,7 +526,7 @@ class AutoCalibration:
                 rc = (yaml.safe_load(path.read_text()) or {}).get("robot_config", {})
             except OSError:
                 continue
-            out[f"franka_{side}"] = {k: str(rc[k]) for k in ("rpy_ee", "cam_holder_yaw", "cam_image_flip") if k in rc}
+            out[f"franka_{side}"] = {k: str(rc[k]) for k in ("rpy_ee", "camera_holder", "cam_holder_yaw", "cam_image_flip") if k in rc}
         return out
 
     # ---- saved calibrations -----------------------------------------------------------------------------------------

@@ -73,7 +73,12 @@ def _publish_as(module_name: str, *classes: type) -> None:
         sys.modules[module_name] = module
         parent, _, child = module_name.rpartition(".")
         if parent and parent not in sys.modules:
-            sys.modules[parent] = types.ModuleType(parent)
+            try:   # the real package (franka_client), so its other modules stay importable
+                importlib.import_module(parent)
+            except ImportError:
+                pkg = types.ModuleType(parent)
+                pkg.__path__ = []      # still a package: later ``parent.x`` imports fail normally
+                sys.modules[parent] = pkg
         if parent:
             setattr(sys.modules[parent], child, module)
     for cls in classes:
