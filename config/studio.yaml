@@ -53,8 +53,9 @@ components:
   pointcloud:
     label: Point cloud
     icon: cloud
-    # Fast-FoundationStereo for every rig camera on the Jetson -> /ffs/points (config/cameras.yaml
-    # `pointcloud`). Also started / stopped by the Point cloud modality (Observation space).
+    # Fast-FoundationStereo for every rig camera, on the Jetson or this PC -> /ffs/points
+    # (config/cameras.yaml `pointcloud`). Also started / stopped by the Point cloud modality
+    # (Observation space).
     cmd: pixi run -e humble pointcloud
     probe_topic: /ffs/status
   teleop:

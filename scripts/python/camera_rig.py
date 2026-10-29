@@ -23,9 +23,21 @@ def zed_mode(jetson: dict) -> str:
     return "depth" if depth else ""
 
 
+def pointcloud_settings(cfg: dict) -> dict:
+    """``pointcloud`` of cameras.yaml, with its ``pc`` overrides applied for ``host: pc``."""
+    pc = dict(cfg.get("pointcloud") or {})
+    host = pc.setdefault("host", "jetson")
+    if host not in ("jetson", "pc"):
+        sys.exit(f"pointcloud.host must be jetson or pc, not {host!r}")
+    overrides = pc.pop("pc", None) or {}
+    if host == "pc":
+        pc.update(overrides)
+    return pc
+
+
 def pointcloud_config(cfg: dict, cams: list) -> dict:
     """The ffs_rig_node.py config (see DEFAULTS there) for this rig."""
-    pc = dict(cfg.get("pointcloud") or {})
+    pc = pointcloud_settings(cfg)
     agg = cfg.get("aggregator", {})
     node_cfg = {"cameras": cams, "topic_prefix": agg.get("topic_prefix", "/zed_multi")}
     for key in ("engine", "rate", "topic", "world_frame", "zmin", "zfar", "crop", "voxel", "max_points",
@@ -76,7 +88,8 @@ def main() -> None:
         "zed_mode": zed_mode(jetson),
     }
     if with_pointcloud:
-        pc = cfg.get("pointcloud") or {}
+        pc = pointcloud_settings(cfg)
+        values["pc_host"] = pc["host"]
         values["pc_repo"] = pc.get("repo", "~/Projects/Fast-FoundationStereo")
         values["pc_config_b64"] = base64.b64encode(json.dumps(pointcloud_config(cfg, cams)).encode()).decode()
     for key, value in values.items():

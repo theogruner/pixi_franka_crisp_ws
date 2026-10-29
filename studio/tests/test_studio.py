@@ -339,6 +339,11 @@ def test_camera_rig_modes_and_rgb_only_aggregator_params(tmp_path):
     assert camera_rig.zed_mode({"depth": True, "stereo": True, "zed_overrides": "~/x/"}) == "~/x/zed_stereo_depth.yaml"
     node = camera_rig.pointcloud_config(cfg, ["a", "b"])
     assert node["cameras"] == ["a", "b"] and "extrinsics" in node
+    pc = {"host": "pc", "engine": "jetson.engine", "rate": 5.0, "pc": {"engine": "pc.engine", "rate": 20.0}}
+    assert camera_rig.pointcloud_config({"pointcloud": pc}, ["a"])["engine"] == "pc.engine"
+    assert camera_rig.pointcloud_config({"pointcloud": pc}, ["a"])["rate"] == 20.0
+    jetson = camera_rig.pointcloud_config({"pointcloud": {**pc, "host": "jetson"}}, ["a"])
+    assert jetson["engine"] == "jetson.engine" and jetson["rate"] == 5.0
     cfg["jetson"]["depth"] = False
     path = tmp_path / "cams.yaml"
     path.write_text(yaml.safe_dump(cfg))

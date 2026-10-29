@@ -17,11 +17,17 @@ jetson:
   stereo: true
   zed_overrides: ~/Projects/Fast-FoundationStereo/jetson   # zed_stereo.yaml / zed_stereo_depth.yaml
 
-# Point cloud: Fast-FoundationStereo on the Jetson (TensorRT, one engine for every camera of the
-# rig), merged in the world frame there; only the merged cloud crosses the camera link.
-# Set up once from the PC with ../Fast-FoundationStereo/jetson/setup_from_pc.sh. Started by
-# `pixi run pointcloud` (scripts/run_pointcloud.sh) or the studio's Point cloud component.
+# Point cloud: Fast-FoundationStereo (TensorRT, one engine for every camera of the rig), merged in
+# the world frame. Started by `pixi run pointcloud` (scripts/run_pointcloud.sh) or the studio's
+# Point cloud component.
 pointcloud:
+  # Where the network runs:
+  #   jetson: next to the cameras; only the merged cloud crosses the camera link. Set up once with
+  #           ../Fast-FoundationStereo/jetson/setup_from_pc.sh.
+  #   pc:     this PC's GPU, with the keys of `pc` below overriding these. The rectified right
+  #           images cross the camera link too (~1.7 Gbit/s for three SVGA cameras at 30 Hz).
+  #           Set up once: `pixi run -e gsplat-policy pc-build-engine` in ../Fast-FoundationStereo.
+  host: pc
   repo: ~/Projects/Fast-FoundationStereo     # on the Jetson
   # GWC cost volume as the FFSGWCVolume TensorRT plugin: 72 ms per pair on the Orin instead of 121 ms
   # (output/onnx_320x480: same model without the plugin; disparities equal to ~0.01 px)
@@ -31,8 +37,8 @@ pointcloud:
   world_frame: world
   zfar: 1.5                   # m, per camera
   crop: {min: [-0.4, -1.2, -0.05], max: [1.4, 1.2, 1.2]}   # world box around the workspace
-  voxel: 0.005                # m
-  max_points: 80000
+  voxel: 0.001                # m
+  max_points: 400000          # 3 cameras x 480x270 engine pixels ~ 389k: no cap at 1 mm
   # Each camera's last cloud stays in the merge until it is this old (the cameras are processed
   # one after the other, ~0.3 s each, so a short limit dropped a view every other refresh).
   max_age: 2.0                # s
@@ -50,6 +56,10 @@ pointcloud:
   extrinsics:
     zed_right_arm: {frame: franka_right_zed_left_camera_optical_frame}
     zed_left_arm: {frame: franka_left_zed_left_camera_optical_frame}
+  pc:                         # overrides for host: pc
+    repo: ../Fast-FoundationStereo            # relative to this workspace
+    engine: output/onnx_320x480/fast_foundationstereo.engine   # no GWC plugin on the PC
+    rate: 30.0                # 10 ms per pair + GPU post-processing: every camera at its 30 Hz
 
 aggregator:
   publish_topic: /zed_rig/synced_raw_snapshot
