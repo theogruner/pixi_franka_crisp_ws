@@ -1,0 +1,9 @@
+# Objects to track (studio: Objects card). prompt: text for the segmenter; mesh by default
+# objects/<name>/mesh.ply, made by the card's Scan (or ../pose_tracking `pixi run scan`).
+objects:
+- name: grey_mug
+  prompt: grey mug
+- name: blue_box
+  prompt: blue box
+- name: wooden_stand
+  prompt: wooden stand
