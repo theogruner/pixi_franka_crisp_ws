@@ -261,10 +261,11 @@
           <input id="obj-new" placeholder="Object to track, e.g. white mug" autocomplete="off" spellcheck="false">
           <button class="btn btn-soft" type="submit">Add</button>
         </form>
-        <p class="muted small calib-hint">Each name is the segmenter's text prompt. Unknown objects: <b>Scan</b> moves the wrist
-          cameras around them, builds a mesh per object and starts tracking at the scanned poses (Point cloud and Object poses start by themselves).</p>
+        <p class="muted small calib-hint">Each name is the segmenter's text prompt. Objects without a mesh: <b>Scan</b> moves the wrist
+          cameras around them, builds a mesh per object and starts tracking at the scanned poses (Point cloud and Object poses start by themselves).
+          Objects with a mesh are not scanned again; the tracking finds them (&#x21bb; scans one again).</p>
         <div class="btn-row">
-          <button class="btn btn-primary" id="obj-scan"><svg class="i"><use href="#i-target"/></svg>Scan &amp; estimate poses</button>
+          <button class="btn btn-primary" id="obj-scan"><svg class="i"><use href="#i-target"/></svg><span id="obj-scan-text">Scan &amp; estimate poses</span></button>
           <button class="btn btn-stop" id="obj-stop" hidden><svg class="i"><use href="#i-stop"/></svg>Stop</button>
         </div>
         <div class="calib-progress" id="obj-progress" hidden></div>

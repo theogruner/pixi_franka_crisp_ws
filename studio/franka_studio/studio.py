@@ -520,18 +520,30 @@ class Studio:
             if self.processes.get(name) and not self.processes.is_up(name):
                 self.processes.start(name)
 
-    def objects_scan(self) -> dict:
+    def objects_scan(self, names: object = "") -> dict:
+        """Scans the objects without a mesh, or ``names`` (scan again). Objects with a mesh are
+        located by the pose tracking itself: with nothing to scan, it only starts tracking."""
         if not self.project:
             return self._result(False, "No project selected.")
         if self.collection.recording:
             return self._result(False, "Stop the recording first.")
         if self.calibration.state == "running":
             return self._result(False, "A camera calibration is running.")
+        specs = self.pose_tracking.specs
+        if names:
+            specs = [s for s in specs if s["name"] in names]
+        else:
+            specs = [s for s in specs if not s["mesh"]]
+        if not specs:
+            if not self.pose_tracking.specs:
+                return self._result(False, "Add the objects to scan first.")
+            self._prepare_object_scan()
+            return self._result(True, "All objects have a mesh: the pose tracking locates them, no scan needed.")
         if self.runner and self.runner.running:
             self.runner.stop()
         if self.active_env is not None:
             self.active_env.stop_home()
-        objects = [{"name": s["name"], "prompt": s["prompt"]} for s in self.pose_tracking.specs]
+        objects = [{"name": s["name"], "prompt": s["prompt"]} for s in specs]
         return self._result(*_ok_msg(self.object_scan.start(objects, str(self.project.root / "objects"))))
 
     # ---- data collection -----------------------------------------------------------------------------

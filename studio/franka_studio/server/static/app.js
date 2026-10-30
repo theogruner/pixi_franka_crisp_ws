@@ -354,10 +354,11 @@ function renderObjects(s) {
   const scan = s.object_scan || {};
   const running = scan.state === "running";
   const list = $("#obj-list");
-  if (!list.contains(document.activeElement) && changed("obj-list", specs.map((o) => [o.name, o.prompt]))) {
+  if (!list.contains(document.activeElement) && changed("obj-list", specs.map((o) => [o.name, o.prompt, o.mesh]))) {
     list.innerHTML = specs.length ? specs.map((o) => `<div class="obj-row" data-name="${esc(o.name)}">
         <input value="${esc(o.prompt)}" title="${esc(o.name)}: prompt for the segmenter" spellcheck="false">
         <span class="obj-state"></span>
+        <button class="icon-btn sm" title="Scan again (new mesh)" data-rescan ${o.mesh ? "" : "hidden"}><svg class="i"><use href="#i-refresh"/></svg></button>
         <button class="icon-btn sm" title="Remove" data-remove><svg class="i"><use href="#i-trash"/></svg></button></div>`).join("")
       : `<div class="empty">No objects yet: add what to track.</div>`;
   }
@@ -368,13 +369,17 @@ function renderObjects(s) {
     chip.textContent = text;
     row.querySelector("input").disabled = running;
     row.querySelector("[data-remove]").disabled = running;
+    row.querySelector("[data-rescan]").disabled = running || s.halted;
   }
   const missing = specs.filter((o) => !o.mesh).length;
   $("#objects-sub").textContent = specs.length ? `${specs.length} objects${missing ? ` · ${missing} without mesh` : ""}` : "";
   $("#obj-scan").hidden = running;
   $("#obj-stop").hidden = !running;
   $("#obj-scan").disabled = !specs.length || s.halted || s.calibration?.state === "running";
-  $("#obj-scan").title = s.halted ? "Resume first" : !specs.length ? "Add objects first" : "Locate the objects, drive the wrist cameras around them, build their meshes and start tracking";
+  $("#obj-scan").title = s.halted ? "Resume first" : !specs.length ? "Add objects first"
+    : missing ? "Locate the objects without a mesh, drive the wrist cameras around them, build their meshes and start tracking (objects with a mesh are not scanned again)"
+    : "Every object has a mesh: start the pose tracking, which locates them (no arm motion)";
+  $("#obj-scan-text").textContent = missing ? `Scan ${missing} & estimate poses` : "Estimate poses";
   $("#obj-new").disabled = running;
   const prog = $("#obj-progress");
   const lines = [...(scan.progress || [])];
@@ -712,6 +717,12 @@ function wire() {
     saveObjects([...objectRows(), { name: "", prompt }]);
   };
   $("#obj-list").addEventListener("click", (e) => {
+    const rescan = e.target.closest("[data-rescan]");
+    if (rescan) {
+      const name = rescan.closest(".obj-row").dataset.name;
+      if (confirm(`Scan ${name} again? Its mesh is replaced.\n\nBoth arms move on their own around it, one after the other (slowly, within 30 cm of where they stand now).\n\nKeep the area clear and the Stop button in reach.`)) post("objects/scan", { names: [name] });
+      return;
+    }
     const btn = e.target.closest("[data-remove]");
     if (!btn) return;
     btn.closest(".obj-row").remove();
@@ -723,7 +734,9 @@ function wire() {
     saveObjects(objectRows());
   });
   $("#obj-scan").onclick = () => {
-    const names = objectRows().map((o) => o.prompt).join(", ");
+    const specs = ui.status?.pose_tracking?.specs || [];
+    const names = specs.filter((o) => !o.mesh).map((o) => o.prompt).join(", ");
+    if (!names) { post("objects/scan"); return; }   // all meshed: only starts the tracking
     if (!confirm(`Scan ${names}?\n\nBoth arms move on their own around the objects, one after the other (slowly, within 30 cm of where they stand now). Point the wrist cameras roughly at the objects first.\n\nKeep the area clear and the Stop button in reach.`)) return;
     post("objects/scan");
   };
