@@ -58,6 +58,14 @@ components:
     # (Observation space).
     cmd: pixi run -e humble pointcloud
     probe_topic: /ffs/status
+  pose_tracking:
+    label: Object poses
+    icon: cube
+    # Tracks the objects of the active project (env.yaml `objects`) on the point cloud's RGB-D:
+    # ../pose_tracking, config/pose_tracking.yaml. Needs the Point cloud component; also started /
+    # stopped by the Object poses modality (Observation space).
+    cmd: pixi run -e humble pose-tracking
+    probe_topic: /pose_tracking/status
   teleop:
     label: Teleoperation
     icon: gamepad

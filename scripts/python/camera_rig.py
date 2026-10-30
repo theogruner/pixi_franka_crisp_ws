@@ -41,7 +41,7 @@ def pointcloud_config(cfg: dict, cams: list) -> dict:
     agg = cfg.get("aggregator", {})
     node_cfg = {"cameras": cams, "topic_prefix": agg.get("topic_prefix", "/zed_multi")}
     for key in ("engine", "rate", "topic", "world_frame", "zmin", "zfar", "crop", "voxel", "max_points",
-                "edge_threshold", "extrinsics", "baseline", "max_age", "support", "flip_images"):
+                "edge_threshold", "extrinsics", "baseline", "max_age", "support", "flip_images", "backend"):
         if key in pc:
             node_cfg[key] = pc[key]
     return node_cfg

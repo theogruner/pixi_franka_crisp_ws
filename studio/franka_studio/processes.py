@@ -4,17 +4,24 @@ Each component is one shell command run in its own process group, so stopping it
 child (``pixi run`` -> bash -> ``ros2 launch`` -> nodes). Output is kept in a ring buffer that the
 UI streams. Stop sends SIGINT (ros2 launch shuts its nodes down cleanly on it), then SIGTERM, then
 SIGKILL.
+
+The process groups are also written to a registry file (``.studio/components.json``): a studio that
+ended without stopping its components (killed, crashed, ``--keep-components``) leaves them running
+in their own sessions, and the next studio adopts them (shown as running, stoppable; their output is
+not captured) instead of losing track of them or starting them twice.
 """
 
 from __future__ import annotations
 
 import collections
+import json
 import os
 import signal
 import subprocess
 import threading
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Callable
 
 from franka_studio.paths import WORKSPACE, resolve
@@ -24,6 +31,33 @@ STOP_TIMEOUTS_S = (12.0, 5.0)  # after SIGINT, after SIGTERM
 
 STOPPED, STARTING, RUNNING, STOPPING, EXITED, FAILED = (
     "stopped", "starting", "running", "stopping", "exited", "failed")
+
+
+def _boot_id() -> str:
+    try:
+        return Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+    except OSError:
+        return ""
+
+
+def _group_started(pgid: int) -> float | None:
+    """Wall-clock start of the oldest process still in group ``pgid`` (None: group gone)."""
+    try:
+        boot = time.time() - float(Path("/proc/uptime").read_text().split()[0])
+        ticks = os.sysconf("SC_CLK_TCK")
+    except (OSError, ValueError):
+        return None
+    starts = []
+    for d in Path("/proc").iterdir():
+        if not d.name.isdigit():
+            continue
+        try:
+            fields = (d / "stat").read_text().rsplit(")", 1)[1].split()
+        except (OSError, IndexError):
+            continue
+        if int(fields[2]) == pgid:   # fields after "(comm)": state ppid pgrp ... starttime is the 20th
+            starts.append(boot + int(fields[19]) / ticks)
+    return min(starts) if starts else None
 
 
 @dataclass
@@ -61,11 +95,14 @@ class ComponentSpec:
 class ManagedProcess:
     """A component's process and its captured output."""
 
-    def __init__(self, spec: ComponentSpec, on_exit: Callable[[str, int], None] | None = None):
+    def __init__(self, spec: ComponentSpec, on_exit: Callable[[str, int], None] | None = None,
+                 on_group: Callable[[str, int | None, float | None], None] | None = None):
         self.spec = spec
         self._on_exit = on_exit
+        self._on_group = on_group   # (name, pgid | None, started_at): registry bookkeeping
         self._lock = threading.Lock()
         self._proc: subprocess.Popen | None = None
+        self._pgid: int | None = None   # our process group: the Popen's, or an adopted one
         self.state = STOPPED
         self.started_at: float | None = None
         self.exit_code: int | None = None
@@ -97,13 +134,13 @@ class ManagedProcess:
     @property
     def alive(self) -> bool:
         """True while the command or anything left in its process group runs."""
-        if self._proc is None:
+        if self._pgid is None:
             return False
-        return self._proc.poll() is None or self._group_alive()
+        return (self._proc is not None and self._proc.poll() is None) or self._group_alive()
 
     def _group_alive(self) -> bool:
         try:
-            os.killpg(self._proc.pid, 0)
+            os.killpg(self._pgid, 0)
             return True
         except ProcessLookupError:
             return False
@@ -127,10 +164,31 @@ class ManagedProcess:
             self.state = FAILED
             self._append(f"[studio] failed to start: {e}")
             return False, str(e)
+        self._pgid = self._proc.pid
         self._stop_requested = False
         self.state, self.started_at, self.exit_code = STARTING, time.time(), None
+        if self._on_group:
+            self._on_group(self.spec.name, self._pgid, self.started_at)
         threading.Thread(target=self._pump, args=(self._proc,), daemon=True).start()
         return True, f"{self.spec.label} started."
+
+    def adopt(self, pgid: int, started_at: float) -> None:
+        """Takes over a still running group of an earlier studio (no output, no exit code)."""
+        self._proc, self._pgid = None, pgid
+        self._stop_requested = False
+        self.state, self.started_at, self.exit_code = RUNNING, started_at, None
+        self._append(f"[studio] still running from an earlier studio session (process group {pgid}); "
+                     "its output is not captured here")
+        threading.Thread(target=self._watch_adopted, daemon=True).start()
+
+    def _watch_adopted(self) -> None:
+        while self._proc is None and self._group_alive():
+            time.sleep(0.5)
+        if self._proc is None:
+            self.state = STOPPED if self._stop_requested else EXITED
+            self._append("[studio] process group ended")
+            if self._on_group:
+                self._on_group(self.spec.name, None, None)
 
     def _pump(self, proc: subprocess.Popen) -> None:
         assert proc.stdout is not None
@@ -144,25 +202,26 @@ class ManagedProcess:
         self.exit_code = code
         self.state = STOPPED if self._stop_requested else (EXITED if code == 0 else FAILED)
         self._append(f"[studio] process exited with code {code}")
+        if self._on_group:
+            self._on_group(self.spec.name, None, None)
         if self._on_exit:
             self._on_exit(self.spec.name, code)
 
     def stop(self) -> tuple[bool, str]:
-        proc = self._proc
-        if proc is None or proc.poll() is not None:
+        if not self.alive:
             self.state = STOPPED
             return False, f"{self.spec.label} is not running."
         self._stop_requested = True
         self.state = STOPPING
-        threading.Thread(target=self._terminate, args=(proc,), daemon=True).start()
+        threading.Thread(target=self._terminate, args=(self._pgid,), daemon=True).start()
         return True, f"Stopping {self.spec.label}…"
 
-    def _terminate(self, proc: subprocess.Popen) -> None:
+    def _terminate(self, pgid: int) -> None:
         """Signals the whole group, escalating until every process in it is gone."""
         for sig, timeout in ((signal.SIGINT, STOP_TIMEOUTS_S[0]), (signal.SIGTERM, STOP_TIMEOUTS_S[1]),
                              (signal.SIGKILL, 2.0)):
             try:
-                os.killpg(proc.pid, sig)
+                os.killpg(pgid, sig)
             except ProcessLookupError:
                 return
             deadline = time.time() + timeout
@@ -188,9 +247,48 @@ class ManagedProcess:
 class ProcessManager:
     """All components, keyed by name, in display order."""
 
-    def __init__(self) -> None:
+    def __init__(self, registry: Path | None = None) -> None:
         self.components: dict[str, ManagedProcess] = {}
         self._probe: Callable[[ComponentSpec], bool] | None = None
+        self._registry = registry
+        self._registry_lock = threading.Lock()
+
+    # ---- registry of running process groups ------------------------------------------------------
+
+    def _read_registry(self) -> dict:
+        try:
+            data = json.loads(self._registry.read_text())
+        except (OSError, ValueError, AttributeError):
+            return {}
+        return data.get("groups", {}) if data.get("boot_id") == _boot_id() else {}
+
+    def _record(self, name: str, pgid: int | None, started_at: float | None) -> None:
+        if self._registry is None:
+            return
+        with self._registry_lock:
+            groups = self._read_registry()
+            if pgid is None:
+                groups.pop(name, None)
+            else:
+                groups[name] = {"pgid": pgid, "started_at": started_at}
+            try:
+                self._registry.parent.mkdir(parents=True, exist_ok=True)
+                self._registry.write_text(json.dumps({"boot_id": _boot_id(), "groups": groups}, indent=1))
+            except OSError:
+                pass
+
+    def _adopt_leftovers(self) -> None:
+        """Groups an earlier studio started that still run (same boot, same start time)."""
+        for name, entry in self._read_registry().items():
+            proc = self.components.get(name)
+            if proc is None or proc.alive:
+                continue
+            started = _group_started(int(entry["pgid"]))
+            # the group's oldest process started with the component: not a recycled process id
+            if started is not None and abs(started - float(entry["started_at"])) < 5.0:
+                proc.adopt(int(entry["pgid"]), float(entry["started_at"]))
+            else:
+                self._record(name, None, None)
 
     def configure(self, specs: dict[str, dict]) -> None:
         """(Re)declares the components. Running ones keep running; new specs replace idle ones."""
@@ -205,10 +303,11 @@ class ProcessManager:
         for name, spec in wanted.items():
             current = self.components.get(name)
             if current is None:
-                self.components[name] = ManagedProcess(spec)
+                self.components[name] = ManagedProcess(spec, on_group=self._record)
             elif not current.alive:
                 current.spec = spec
         self.components = dict(sorted(self.components.items(), key=lambda kv: kv[1].spec.order))
+        self._adopt_leftovers()
 
     def set_probe(self, probe: Callable[[ComponentSpec], bool]) -> None:
         self._probe = probe

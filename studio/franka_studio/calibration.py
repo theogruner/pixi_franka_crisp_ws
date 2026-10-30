@@ -34,8 +34,9 @@ from pathlib import Path
 
 import numpy as np
 import yaml
-from scipy.spatial.transform import Rotation, Slerp
+from scipy.spatial.transform import Rotation
 
+from franka_studio.motion import ARM_ID, Aborted, ArmMover
 from franka_studio.paths import WORKSPACE
 
 log = logging.getLogger(__name__)
@@ -44,42 +45,20 @@ sys.path.insert(0, str(WORKSPACE / "scripts" / "python"))
 import board_calibration as bc  # noqa: E402
 
 CALIB_DIR = WORKSPACE / "config" / "calibrations"
-ARM_ID = "fr3"
-RATE_HZ = 50.0
 PROBES = ((("x", 10.0),), (("y", 10.0),), (("x", -8.0), ("y", -8.0)))   # tilts about the grasp point
 VIEW_TILTS_DEG = (18.0, 30.0)
 VIEW_ROLL_DEG = 15.0
-
-
-def _matrix(tf) -> np.ndarray:
-    return bc.to_matrix(tf)
-
-
-def _interp(A: np.ndarray, B: np.ndarray, s: float) -> np.ndarray:
-    T = np.eye(4)
-    T[:3, 3] = (1 - s) * A[:3, 3] + s * B[:3, 3]
-    T[:3, :3] = Slerp([0.0, 1.0], Rotation.from_matrix([A[:3, :3], B[:3, :3]]))(s).as_matrix()
-    return T
 
 
 def valid_name(name: str) -> bool:
     return bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", name or ""))
 
 
-class Aborted(Exception):
-    pass
-
-
-class AutoCalibration:
+class AutoCalibration(ArmMover):
     def __init__(self, runtime, cfg: dict, save_static, notify) -> None:
         """``save_static(name, position, wxyz)`` stores a static camera pose in the project."""
-        from rclpy.node import Node
-        from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
+        from rclpy.qos import qos_profile_sensor_data
         from sensor_msgs.msg import CameraInfo, CompressedImage
-        from std_msgs.msg import Bool
-        from tf2_ros import Buffer, TransformListener
-
-        from franka_custom_msgs.srv import SetPoseStamped
 
         self.cfg = cfg
         self.runtime = runtime
@@ -91,10 +70,7 @@ class AutoCalibration:
         self.arms: dict[str, str] = dict(cfg["arms"])           # wrist camera -> robot namespace
         self.cameras = list(cfg["static"]) + list(self.arms)
         self.prefix = cfg["topic_prefix"].rstrip("/")
-        self.node = Node("studio_calibration")
-        runtime.add_node(self.node)
-        self.tf = Buffer()
-        self._tf_listener = TransformListener(self.tf, self.node)
+        self._init_motion(runtime, "studio_calibration", list(self.arms.values()), cfg)
         self._lock = threading.Lock()
         self._images: dict[str, object] = {}
         self._info: dict[tuple, object] = {}
@@ -106,13 +82,6 @@ class AutoCalibration:
                 self.node.create_subscription(
                     CameraInfo, f"{self.prefix}/{cam}/{side}/color/rect/camera_info",
                     lambda m, k=(cam, side): self._store(self._info, k, m), qos_profile_sensor_data)
-        self._pose_clients = {robot: self.node.create_client(SetPoseStamped, f"/{robot}/target_pose")
-                              for robot in self.arms.values()}
-        self._SetPoseStamped = SetPoseStamped
-        self.halted = False
-        self.node.create_subscription(
-            Bool, "/robot_halt", self._on_halt,
-            QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE, durability=DurabilityPolicy.TRANSIENT_LOCAL))
 
         self.watching = False
         self.visibility: dict[str, int | None] = {c: None for c in self.cameras}
@@ -122,7 +91,6 @@ class AutoCalibration:
         self.progress: list[str] = []
         self.result: dict | None = None
         self._data: dict | None = None
-        self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         threading.Thread(target=self._watch_loop, daemon=True, name="calib-watch").start()
 
@@ -131,11 +99,6 @@ class AutoCalibration:
     def _store(self, table: dict, key, msg) -> None:
         with self._lock:
             table[key] = msg
-
-    def _on_halt(self, msg) -> None:
-        self.halted = bool(msg.data)
-        if self.halted:
-            self._stop.set()
 
     def _set_images(self, on: bool) -> None:
         """Compressed images only while needed: the Jetson encodes them only while subscribed."""
@@ -179,15 +142,6 @@ class AutoCalibration:
 
     # ---- ROS helpers ------------------------------------------------------------------------------------
 
-    def _lookup(self, target: str, source: str, stamp: float | None = None, timeout: float = 0.5):
-        from rclpy.duration import Duration
-        from rclpy.time import Time
-        t = Time() if stamp is None else Time(seconds=stamp)
-        try:
-            return _matrix(self.tf.lookup_transform(target, source, t, timeout=Duration(seconds=timeout)))
-        except Exception:
-            return None
-
     def _intrinsics(self) -> dict:
         out = {}
         with self._lock:
@@ -212,10 +166,6 @@ class AutoCalibration:
                         "mount": None if mount is None else mount.tolist(),
                         "base": None if base is None else base.tolist()}
         return out
-
-    def _check(self) -> None:
-        if self._stop.is_set() or self.halted:
-            raise Aborted()
 
     # ---- capture ------------------------------------------------------------------------------------------
 
@@ -274,75 +224,6 @@ class AutoCalibration:
             if cam in self.arms:
                 self._log(f"  {cam} not used: {why}")
         return sample
-
-    def _settle(self) -> None:
-        """Waits settle_s, then until every arm's flange is still (as the capture requires), at most 5 s more."""
-        t_end = time.time() + float(self.cfg["settle_s"])
-        while time.time() < t_end:
-            self._check()
-            time.sleep(0.05)
-        t_end = time.time() + 5.0
-        while time.time() < t_end:
-            self._check()
-            if all(self._still(robot) for robot in self.arms.values()):
-                return
-            time.sleep(0.1)
-
-    def _still(self, robot: str) -> bool:
-        """No flange motion over the last 0.3 s (TF; True when unknown: the capture reports that)."""
-        link8 = f"{robot}_{ARM_ID}_link8"
-        now = self.node.get_clock().now().nanoseconds * 1e-9
-        F0 = self._lookup("world", link8, now - 0.4)
-        F1 = self._lookup("world", link8, now - 0.1)
-        if F0 is None or F1 is None:
-            return True
-        D = np.linalg.inv(F0) @ F1
-        return np.linalg.norm(D[:3, 3]) < 0.7 * bc.STILL_M and bc.angle_deg(D[:3, :3]) < 0.7 * bc.STILL_DEG
-
-    # ---- motion ---------------------------------------------------------------------------------------------
-
-    def _grasp(self, robot: str) -> np.ndarray:
-        G = self._lookup("world", f"{robot}_grasp_point")
-        if G is None:
-            raise RuntimeError(f"no TF world <- {robot}_grasp_point")
-        return G
-
-    def _send(self, robot: str, T: np.ndarray) -> None:
-        from geometry_msgs.msg import PoseStamped
-        client = self._pose_clients[robot]
-        if not client.service_is_ready():
-            raise RuntimeError(f"/{robot}/target_pose is not available")
-        req = self._SetPoseStamped.Request()
-        req.pose = PoseStamped()
-        req.pose.header.stamp = self.node.get_clock().now().to_msg()
-        req.pose.header.frame_id = "world"
-        x, y, z, w = Rotation.from_matrix(T[:3, :3]).as_quat()
-        req.pose.pose.position.x, req.pose.pose.position.y, req.pose.pose.position.z = map(float, T[:3, 3])
-        req.pose.pose.orientation.x, req.pose.pose.orientation.y = float(x), float(y)
-        req.pose.pose.orientation.z, req.pose.pose.orientation.w = float(z), float(w)
-        client.call_async(req)
-
-    def _move(self, robot: str, target: np.ndarray) -> bool:
-        """Slow straight-line move of the grasp point (slerped orientation); True when arrived."""
-        start = self._grasp(robot)
-        dist = float(np.linalg.norm(target[:3, 3] - start[:3, 3]))
-        ang = bc.angle_deg(start[:3, :3].T @ target[:3, :3])
-        T = max(dist / float(self.cfg["speed"]), ang / float(self.cfg["rotation_speed_deg"]), 1.0)
-        n = max(int(T * RATE_HZ), 1)
-        for k in range(1, n + 1):
-            self._check()
-            self._send(robot, _interp(start, target, k / n))
-            time.sleep(1.0 / RATE_HZ)
-        t_end = time.time() + 4.0     # the IK lags behind its target
-        while time.time() < t_end:
-            self._check()
-            G = self._grasp(robot)
-            if (np.linalg.norm(G[:3, 3] - target[:3, 3]) < 0.01
-                    and bc.angle_deg(G[:3, :3].T @ target[:3, :3]) < 2.0):
-                return True
-            self._send(robot, target)
-            time.sleep(0.1)
-        return False
 
     # ---- planning ----------------------------------------------------------------------------------------------
 

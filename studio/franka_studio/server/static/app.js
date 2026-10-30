@@ -19,8 +19,8 @@ const ui = {
 
 // ---------------------------------------------------------------- helpers
 
-const ICONS = { robot: "i-robot", camera: "i-camera", teleop: "i-gamepad", gamepad: "i-gamepad", record: "i-record", server: "i-server", brain: "i-brain", cloud: "i-points", points: "i-points" };
-const MODALITY_ICONS = { state: "i-robot", rgb: "i-camera", pointcloud: "i-points", depth: "i-layers" };
+const ICONS = { robot: "i-robot", camera: "i-camera", teleop: "i-gamepad", gamepad: "i-gamepad", record: "i-record", server: "i-server", brain: "i-brain", cloud: "i-points", points: "i-points", cube: "i-cube" };
+const MODALITY_ICONS = { state: "i-robot", rgb: "i-camera", pointcloud: "i-points", depth: "i-layers", object_poses: "i-cube" };
 
 function fmtDuration(s) {
   if (s == null) return "";
@@ -95,6 +95,7 @@ function render(s) {
   renderRigCameras(s);
   renderCluster(s);
   renderCalibration(s);
+  renderObjects(s);
   renderViewer(s);
   for (const e of s.events || []) if (e.t > PAGE_T0 - 1) toast(e.text, e.level);
 }
@@ -275,6 +276,7 @@ function renderSpace(s) {
   const on = mods.filter((m) => m.enabled).length;
   $("#space-sub").textContent = `${on} of ${mods.length} on`;
   renderPointCloud(s);
+  renderPoseTracking(s);
   const extra = s.record_topics || [];
   $("#record-line").innerHTML = extra.length ? `Recorded with each episode: ${extra.map((t) => `<code>${esc(t)}</code>`).join(" ")}` : "Recorded: the collector's topics and RGB videos.";
 }
@@ -285,7 +287,7 @@ function globMatch(pattern, key) {
 }
 
 function renderPointCloud(s) {
-  const pcMod = (s.modalities || []).find((m) => m.component && m.enabled);
+  const pcMod = (s.modalities || []).find((m) => m.component === "pointcloud" && m.enabled);
   const pc = s.pointcloud;
   const el = $("#pc-status");
   el.hidden = !pcMod;
@@ -298,6 +300,90 @@ function renderPointCloud(s) {
   const cams = Object.entries(pc.cameras || {});
   el.innerHTML = `<div class="pc-head"><span class="dot"></span><b>${pc.hz.toFixed(1)} Hz</b><span><b>${(pc.points / 1000).toFixed(1)}k</b> points</span><span class="muted">engine ${esc(pc.engine)}</span></div>
     <div class="pc-cams">${cams.map(([n, c]) => `<span>${esc(n)}</span><span>${c.ms ? `${c.ms.toFixed(0)} ms` : "—"}</span>${c.error ? `<span class="err">${esc(c.error)}</span>` : ""}`).join("")}</div>`;
+}
+
+function renderPoseTracking(s) {
+  const mod = (s.modalities || []).find((m) => m.component === "pose_tracking" && m.enabled);
+  const pt = s.pose_tracking;
+  const el = $("#pt-status");
+  el.hidden = !mod;
+  if (!mod) return;
+  const st = pt?.status;
+  el.className = `pc-status ${pt?.live ? "live" : "stale"}`;
+  if (!pt || !pt.live) {
+    const none = !(pt?.objects || []).length ? " — no <code>objects</code> in env.yaml" : "";
+    el.innerHTML = `<div class="pc-head"><span class="dot"></span><span>${mod.component_up ? "Waiting for the pose tracking node…" : `Starting ${esc(mod.component)}… (needs the point cloud)`}${none}</span></div>`;
+    return;
+  }
+  const objs = (st.order || []).map((n) => [n, st.objects?.[n] || {}]);
+  el.innerHTML = `<div class="pc-head"><span class="dot"></span><b>${st.hz.toFixed(1)} Hz</b><span>${esc(st.camera)}</span>${st.seg_ms != null ? `<span class="muted">segmentation ${st.seg_ms.toFixed(0)} ms</span>` : ""}</div>
+    ${st.error ? `<div class="err">${esc(st.error)}</div>` : ""}
+    <div class="pc-cams">${objs.map(([n, o]) => `<span>${esc(n)}</span><span>${esc(o.status || "—")}${o.iou != null ? ` · IoU ${o.iou.toFixed(2)}` : ""}</span>${o.message && o.status !== "tracking" ? `<span class="err">${esc(o.message)}</span>` : ""}`).join("")}</div>`;
+}
+
+// ---- objects (pose tracking targets, live scan)
+
+function objectRows() {
+  return [...$("#obj-list").querySelectorAll(".obj-row")].map((r) => ({ name: r.dataset.name || "", prompt: r.querySelector("input").value.trim() }))
+    .filter((o) => o.prompt);
+}
+
+function saveObjects(objects) {
+  ui.lastSig["obj-list"] = null;   // redraw from what the studio stored
+  return post("objects/set", { objects });
+}
+
+function objectState(name, s) {
+  const scan = s.object_scan || {};
+  const node = scan.node;
+  if (scan.state === "running" && node) {
+    if (node.state === "fusing" || (node.views && name in node.views)) return ["", `${node.views?.[name] ?? 0} views`];
+    if (node.located && Object.keys(node.located).length) return name in node.located ? ["mesh", "located"] : ["lost", "not seen"];
+    return ["", "…"];
+  }
+  const res = scan.results?.[name];
+  const st = s.pose_tracking?.live ? s.pose_tracking.status?.objects?.[name] : null;
+  if (st?.status) return [st.status === "tracking" ? "tracking" : st.status === "error" ? "error" : "lost", st.status];
+  if (res?.error) return ["error", "scan failed"];
+  const spec = (s.pose_tracking?.specs || []).find((o) => o.name === name);
+  return spec?.mesh ? ["mesh", "mesh"] : ["", "no mesh"];
+}
+
+function renderObjects(s) {
+  const specs = s.pose_tracking?.specs || [];
+  const scan = s.object_scan || {};
+  const running = scan.state === "running";
+  const list = $("#obj-list");
+  if (!list.contains(document.activeElement) && changed("obj-list", specs.map((o) => [o.name, o.prompt]))) {
+    list.innerHTML = specs.length ? specs.map((o) => `<div class="obj-row" data-name="${esc(o.name)}">
+        <input value="${esc(o.prompt)}" title="${esc(o.name)}: prompt for the segmenter" spellcheck="false">
+        <span class="obj-state"></span>
+        <button class="icon-btn sm" title="Remove" data-remove><svg class="i"><use href="#i-trash"/></svg></button></div>`).join("")
+      : `<div class="empty">No objects yet: add what to track.</div>`;
+  }
+  for (const row of list.querySelectorAll(".obj-row")) {
+    const [cls, text] = objectState(row.dataset.name, s);
+    const chip = row.querySelector(".obj-state");
+    chip.className = `obj-state ${cls}`;
+    chip.textContent = text;
+    row.querySelector("input").disabled = running;
+    row.querySelector("[data-remove]").disabled = running;
+  }
+  const missing = specs.filter((o) => !o.mesh).length;
+  $("#objects-sub").textContent = specs.length ? `${specs.length} objects${missing ? ` · ${missing} without mesh` : ""}` : "";
+  $("#obj-scan").hidden = running;
+  $("#obj-stop").hidden = !running;
+  $("#obj-scan").disabled = !specs.length || s.halted || s.calibration?.state === "running";
+  $("#obj-scan").title = s.halted ? "Resume first" : !specs.length ? "Add objects first" : "Locate the objects, drive the wrist cameras around them, build their meshes and start tracking";
+  $("#obj-new").disabled = running;
+  const prog = $("#obj-progress");
+  const lines = [...(scan.progress || [])];
+  if (running && scan.node?.message) lines.push(`node: ${scan.node.message}`);
+  prog.hidden = !lines.length;
+  if (!prog.hidden && changed("obj-prog", [scan.state, scan.phase, lines])) {
+    prog.innerHTML = `<div class="phase ${esc(scan.state)}">${esc(running ? scan.phase : scan.state)}</div>${esc(lines.join("\n"))}`;
+    prog.scrollTop = prog.scrollHeight;
+  }
 }
 
 // ---- policies
@@ -618,6 +704,30 @@ function wire() {
   $("#halt-btn").onclick = () => post("halt");
   $("#resume-btn").onclick = () => post("resume");
   $("#calib-watch").onchange = (e) => post("calibration/watch", { on: e.target.checked });
+  $("#obj-add-form").onsubmit = (e) => {
+    e.preventDefault();
+    const prompt = $("#obj-new").value.trim();
+    if (!prompt) return;
+    $("#obj-new").value = "";
+    saveObjects([...objectRows(), { name: "", prompt }]);
+  };
+  $("#obj-list").addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-remove]");
+    if (!btn) return;
+    btn.closest(".obj-row").remove();
+    saveObjects(objectRows());
+  });
+  $("#obj-list").addEventListener("change", (e) => {
+    const row = e.target.closest(".obj-row");
+    if (row) row.dataset.name = "";   // a new prompt is a new object (its own mesh folder)
+    saveObjects(objectRows());
+  });
+  $("#obj-scan").onclick = () => {
+    const names = objectRows().map((o) => o.prompt).join(", ");
+    if (!confirm(`Scan ${names}?\n\nBoth arms move on their own around the objects, one after the other (slowly, within 30 cm of where they stand now). Point the wrist cameras roughly at the objects first.\n\nKeep the area clear and the Stop button in reach.`)) return;
+    post("objects/scan");
+  };
+  $("#obj-stop").onclick = () => post("objects/stop");
   $("#calib-start").onclick = () => {
     const arms = [...$("#calib-arms").querySelectorAll("input:checked")].map((i) => i.value);
     if (!arms.length) { toast("Check at least one arm.", "warn", true); return; }

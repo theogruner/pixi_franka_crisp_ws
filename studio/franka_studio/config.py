@@ -31,6 +31,7 @@ DEFAULTS: dict[str, Any] = {
         "node": "/data_collector",        # its extra_topics parameter: what the modalities add
     },
     "pointcloud_topics": {"status": "/ffs/status", "extrinsics": "/ffs/extrinsics", "align": "/ffs/align"},
+    "pose_tracking_topics": {"status": "/pose_tracking/status", "objects": "/pose_tracking/objects"},
     # Automatic camera calibration (calibration.py): the board on the table, the cameras, motion limits
     "calibration": {
         "board": {"dict": "DICT_4X4_50", "cols": 3, "rows": 4, "first_id": 0, "marker": 0.0565, "sep": 0.0055},
@@ -46,6 +47,27 @@ DEFAULTS: dict[str, Any] = {
         "min_clearance": 0.08,       # m of the grasp point above the board
         "min_distance": 0.30,        # m camera - board centre
         "max_distance": 0.55,
+    },
+    # Scan of unknown objects (object_scan.py): wrist camera views around the objects of the
+    # Objects card; arms and static cameras as for the calibration
+    "object_scan": {
+        "views": 10,                 # per arm, plus the start view
+        "azimuths_deg": [-60, -30, 0, 30, 60],   # around the objects' centre, from the start view
+        "elevations_deg": [-12, 15],             # relative to the start view's
+        "min_elevation_deg": 25.0,
+        "max_elevation_deg": 75.0,
+        "speed": 0.05,               # m/s of the grasp point
+        "rotation_speed_deg": 15.0,  # deg/s
+        "settle_s": 0.7,             # still time before each capture
+        "max_offset": 0.30,          # m from the start pose
+        "max_rotation_deg": 60.0,    # from the start orientation
+        "support_z": 0.0,            # world z of the table top
+        "min_clearance": 0.10,       # m of the grasp point above the table
+        "min_distance": 0.25,        # m camera - objects' centre
+        "max_distance": 0.50,
+        "start_timeout_s": 120.0,    # for the pose tracking node to report
+        "locate_timeout_s": 90.0,    # first segmentation (loads the models)
+        "fuse_timeout_s": 600.0,
     },
 }
 

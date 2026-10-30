@@ -1,0 +1,22 @@
+# Object pose tracking (../pose_tracking), started by `pixi run pose-tracking`
+# (scripts/run_pose_tracking.sh) or the studio's Object poses component. Which objects: the
+# active project's env.yaml `objects` (sent by the studio on /pose_tracking/objects).
+repo: ../pose_tracking               # relative to this workspace
+
+# Its RGB-D comes from the point cloud node (/ffs/<camera>/rgb|depth|camera_info), which computes
+# it only while subscribed, so the Point cloud component has to run too.
+camera: zed_middle
+world_frame: world
+rate: 30.0                           # Hz cap of the tracking loop
+
+# Text -> masks. grounded_sam2: Grounding DINO + SAM 2.1, open weights (~150 ms per segmentation);
+# sam3: SAM 3, gated weights (request facebook/sam3 on Hugging Face).
+segmenter:
+  kind: grounded_sam2
+
+tracker:
+  async_segmentation: true           # segment in the background, track on geometry at camera rate
+  seg_period: 10                     # frames between segmentations while all objects are tracked
+  support_z: 0.0                     # world z of the table top: points just above it are ignored
+  min_fitness: 0.5
+  min_iou: 0.5

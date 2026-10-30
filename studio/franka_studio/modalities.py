@@ -9,12 +9,13 @@ Declared in the project's ``env.yaml``::
         label: Point cloud
         keys: [observation.pointcloud]       # mapping keys (fnmatch patterns) of this modality
         point_clouds: [ffs]                  # scene.point_clouds entries shown with it
+        poses: ["object/*"]                  # scene.poses entries shown with it (fnmatch patterns)
         record: [/ffs/points]                # extra topics the data collector records with it
         component: pointcloud                # started when switched on, stopped when off
         default: false
 
 A switched-off modality drops its mappings from the project env (so ``observation_space`` and
-the observation shown are exactly what is on), its scene clouds and its recorded topics. Mappings
+the observation shown are exactly what is on), its scene clouds and poses and its recorded topics. Mappings
 that match no modality are always on. Policies keep their own mappings unchanged: a policy is
 fed what it was trained on.
 """
@@ -32,6 +33,7 @@ class Modality:
     label: str
     keys: list[str] = field(default_factory=list)
     point_clouds: list[str] = field(default_factory=list)
+    poses: list[str] = field(default_factory=list)
     record: list[str] = field(default_factory=list)
     component: str | None = None
     required: bool = False
@@ -52,7 +54,8 @@ def load_modalities(env_config: dict) -> dict[str, Modality]:
         m = m or {}
         out[mid] = Modality(
             id=mid, label=m.get("label", mid), keys=list(m.get("keys") or []),
-            point_clouds=list(m.get("point_clouds") or []), record=list(m.get("record") or []),
+            point_clouds=list(m.get("point_clouds") or []), poses=list(m.get("poses") or []),
+            record=list(m.get("record") or []),
             component=m.get("component"), required=bool(m.get("required", False)),
             default=bool(m.get("default", True)), description=m.get("description", ""))
     return out
@@ -68,7 +71,7 @@ def resolve_enabled(modalities: dict[str, Modality], remembered: list | None) ->
 
 
 def apply(env_config: dict, modalities: dict[str, Modality], enabled: set[str]) -> dict:
-    """A copy of ``env_config`` without the mappings and scene clouds of switched-off modalities."""
+    """A copy of ``env_config`` without the mappings, scene clouds and poses of switched-off modalities."""
     off = [m for mid, m in modalities.items() if mid not in enabled]
     cfg = copy.deepcopy(env_config)
     if not off:
@@ -79,6 +82,10 @@ def apply(env_config: dict, modalities: dict[str, Modality], enabled: set[str]) 
     hidden = {name for m in off for name in m.point_clouds}
     if scene.get("point_clouds"):
         scene["point_clouds"] = [c for c in scene["point_clouds"] if c.get("name") not in hidden]
+    hidden_poses = [pat for m in off for pat in m.poses]
+    if scene.get("poses") and hidden_poses:
+        scene["poses"] = [p for p in scene["poses"]
+                          if not any(fnmatch.fnmatchcase(p.get("name", ""), pat) for pat in hidden_poses)]
     return cfg
 
 

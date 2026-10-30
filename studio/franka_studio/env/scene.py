@@ -12,7 +12,8 @@ Configured by the ``scene`` section of an env/policy config::
         - name: right_ee
           topic: /franka_right/fijk_debug
           msgtype: franka_custom_msgs/msg/FIJKDebug
-          field: actual_pose        # attribute path inside the message ('' = the message)
+          field: actual_pose        # attribute path inside the message ('' = the message;
+                                    # list items by index, e.g. poses.0 of a PoseArray)
           mesh: null                # optional mesh file drawn at the pose
       point_clouds:                 # sensor_msgs/PointCloud2
         - name: middle
@@ -113,7 +114,7 @@ def fov_from_info(info: object) -> float | None:
 
 def get_path(msg: object, path: str) -> object:
     for part in filter(None, (path or "").split(".")):
-        msg = getattr(msg, part)
+        msg = msg[int(part)] if part.isdigit() else getattr(msg, part)
     return msg
 
 
@@ -203,7 +204,7 @@ class SceneSensors:
     def _on_pose(self, name: str, msg: object, path: str) -> None:
         try:
             pose = to_pose(get_path(msg, path), time.time())
-        except AttributeError:
+        except (AttributeError, IndexError):
             pose = None
         if pose is not None:
             with self._lock:

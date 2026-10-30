@@ -196,6 +196,40 @@ def test_stop_reaches_the_whole_process_group():
     assert _wait(lambda: proc.snapshot()["state"] == "stopped")
 
 
+def test_components_of_an_earlier_studio_are_adopted_and_stoppable(tmp_path):
+    """A studio that died without stopping its components: the next one finds them in the registry."""
+    import franka_studio.processes as processes
+
+    registry = tmp_path / "components.json"
+    spec = {"demo": {"cmd": "echo ready; sleep 60"}}
+    first = ProcessManager(registry)
+    first.configure(spec)
+    assert first.start("demo")[0]
+    assert _wait(lambda: any("ready" in line for _, line in first.get("demo").lines_since(0)))
+    pgid = json.loads(registry.read_text())["groups"]["demo"]["pgid"]
+
+    second = ProcessManager(registry)   # "restarted studio": same registry, first one forgotten
+    second.configure(spec)
+    adopted = second.get("demo")
+    assert adopted.alive and adopted.snapshot()["state"] == "running"
+    assert not second.start("demo")[0]   # no second copy
+    old = processes.STOP_TIMEOUTS_S
+    processes.STOP_TIMEOUTS_S = (0.5, 0.5)
+    try:
+        assert second.stop("demo")[0]
+        assert _wait(lambda: not adopted.alive, timeout=8)
+    finally:
+        processes.STOP_TIMEOUTS_S = old
+    assert _wait(lambda: "demo" not in json.loads(registry.read_text())["groups"])
+    third = ProcessManager(registry)
+    third.configure(spec)
+    assert not third.get("demo").alive
+    with pytest.raises(ProcessLookupError):
+        import os
+
+        os.killpg(pgid, 0)
+
+
 def test_unconfigured_component_refuses_to_start():
     pm = ProcessManager()
     pm.configure({"cams": {"cmd": None}})
@@ -353,3 +387,97 @@ def test_camera_rig_modes_and_rgb_only_aggregator_params(tmp_path):
     params = yaml.safe_load(out.read_text())["zed_rig_aggregator"]["ros__parameters"]
     assert "depth_topics" not in params  # an empty list would have no type for ROS
     assert all(t.endswith("rgb/color/rect/camera_info") for t in params["camera_info_topics"])
+
+
+# ---- object pose tracking ------------------------------------------------------------------------------
+
+def test_object_specs_scene_poses_and_modality_hiding(tmp_path):
+    pytest.importorskip("rclpy")
+    from franka_studio import modalities as mods
+    from franka_studio.pose_tracking import object_specs, with_object_poses
+
+    (tmp_path / "objects" / "mug").mkdir(parents=True)
+    (tmp_path / "objects" / "mug" / "mesh.ply").write_text("ply")
+    specs = object_specs(["mug", {"name": "box", "prompt": "cardboard box", "scale": 0.001}], tmp_path)
+    assert specs[0] == {"name": "mug", "prompt": "mug", "mesh": str(tmp_path / "objects/mug/mesh.ply"), "scale": 1.0}
+    assert specs[1]["mesh"] is None and specs[1]["prompt"] == "cardboard box"   # not scanned yet
+    env = {"scene": {"poses": [{"name": "right_ee", "topic": "/ee"}]},
+           "modalities": {"object_poses": {"keys": ["observation.object_poses"], "poses": ["object/*"],
+                                           "default": False}}}
+    env["mappings"] = {"observation.object_poses": {"topic": "/pose_tracking/poses", "n_poses": 1}}
+    cfg = with_object_poses(env, specs)
+    assert cfg["mappings"]["observation.object_poses"]["n_poses"] == 2 and env["mappings"]["observation.object_poses"]["n_poses"] == 1
+    assert [p["name"] for p in cfg["scene"]["poses"]] == ["right_ee", "object/mug", "object/box"]
+    assert cfg["scene"]["poses"][2]["field"] == "poses.1" and env["scene"]["poses"] == [{"name": "right_ee", "topic": "/ee"}]
+    ms = mods.load_modalities(env)
+    assert [p["name"] for p in mods.apply(cfg, ms, set())["scene"]["poses"]] == ["right_ee"]
+    assert len(mods.apply(cfg, ms, {"object_poses"})["scene"]["poses"]) == 3
+
+
+def test_object_list_file_replaces_env_yaml(tmp_path):
+    pytest.importorskip("rclpy")
+    from franka_studio.pose_tracking import clean_objects, object_list, save_object_list
+
+    env = {"objects": ["mug"]}
+    assert object_list(env, tmp_path) == ["mug"]
+    cleaned, err = clean_objects([{"prompt": "white mug"}, {"name": "box", "prompt": ""}, {"prompt": " "}, "cup"])
+    assert not err and cleaned == [{"name": "white_mug", "prompt": "white mug"}, {"name": "box", "prompt": "box"},
+                                   {"name": "cup", "prompt": "cup"}]
+    assert clean_objects(["cup", {"name": "cup", "prompt": "red cup"}])[1]
+    assert clean_objects([{"name": "../x", "prompt": "x"}])[1]
+    save_object_list(tmp_path, cleaned)
+    assert object_list(env, tmp_path) == cleaned
+
+
+def test_object_scan_views_look_at_the_objects():
+    pytest.importorskip("rclpy")
+    from franka_studio.config import DEFAULTS
+    from franka_studio.motion import angle_deg
+    from franka_studio.object_scan import look_at, plan_views
+
+    cfg = DEFAULTS["object_scan"]
+    centre = np.array([0.5, 0.0, 0.05])
+    C0 = look_at(np.array([0.5, -0.3, 0.35]), centre, np.array([1.0, 0, 0]))
+    G0 = C0 @ np.array([[1, 0, 0, 0.0], [0, 1, 0, -0.06], [0, 0, 1, 0.12], [0, 0, 0, 1]])   # grasp point ahead of the camera
+    targets, skipped = plan_views(C0, G0, centre, cfg)
+    assert 4 <= len(targets) <= cfg["views"]
+    CG = np.linalg.inv(C0) @ G0
+    for G in targets:
+        C = G @ np.linalg.inv(CG)
+        to_centre = centre - C[:3, 3]
+        assert C[:3, 2] @ to_centre / np.linalg.norm(to_centre) > 1 - 1e-9   # looks at it
+        assert angle_deg(G0[:3, :3].T @ G[:3, :3]) <= cfg["max_rotation_deg"] + 1e-6
+        assert np.linalg.norm(G[:3, 3] - G0[:3, 3]) <= cfg["max_offset"] + 1e-9
+        assert G[2, 3] - cfg["support_z"] >= cfg["min_clearance"]
+        assert cfg["min_distance"] - 1e-9 <= np.linalg.norm(to_centre) <= cfg["max_distance"] + 1e-9
+
+
+def test_scene_pose_from_a_pose_array_item():
+    pytest.importorskip("rclpy")
+    from geometry_msgs.msg import Pose, PoseArray
+
+    from franka_studio.env.scene import get_path, to_pose
+
+    msg = PoseArray(poses=[Pose(), Pose()])
+    msg.poses[1].position.x, msg.poses[1].orientation.w = 0.5, 1.0
+    pose = to_pose(get_path(msg, "poses.1"), 0.0)
+    assert pose.position[0] == 0.5 and pose.wxyz[0] == 1.0
+    with pytest.raises(IndexError):
+        get_path(msg, "poses.2")
+
+
+def test_pose_array_extractor_fixed_size():
+    pytest.importorskip("rclpy")
+    from geometry_msgs.msg import Pose, PoseArray
+
+    from franka_studio.ros import registry
+
+    add_import_paths(["src/franka_py/franka_client/franka_client"])
+    registry.load()
+    cls = registry.extractor_class("geometry_msgs/msg/PoseArray")
+    p = Pose()
+    p.position.x, p.position.y, p.position.z, p.orientation.w = 1.0, 2.0, 3.0, 1.0
+    ext = cls(n_poses=2, fields=["position", "orientation"], rot_format="ee6d")
+    out = ext.extract(PoseArray(poses=[p]))   # second object missing -> zeros
+    assert out.shape == ext.shape == (18,) and out.dtype == np.float32
+    assert np.allclose(out[:9], [1, 2, 3, 1, 0, 0, 0, 1, 0]) and not out[9:].any()

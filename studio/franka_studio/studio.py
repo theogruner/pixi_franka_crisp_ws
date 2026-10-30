@@ -30,8 +30,10 @@ from franka_studio.cluster.cluster import Cluster
 from franka_studio.collection.collector import DataCollection, list_datasets, valid_name
 from franka_studio import modalities as mods
 from franka_studio.env import SceneEnv
-from franka_studio.paths import add_import_paths, resolve
+from franka_studio.paths import STATE_DIR, add_import_paths, resolve
 from franka_studio.pointcloud import PointCloudLink
+from franka_studio.pose_tracking import (PoseTrackingLink, clean_objects, object_list, object_specs, save_object_list,
+                                         with_object_poses)
 from franka_studio.policy import remote
 from franka_studio.policy.runner import ERROR, LOADING, PolicyRunner
 from franka_studio.processes import ProcessManager
@@ -73,9 +75,10 @@ class Studio:
         from franka_studio.ros.runtime import RosRuntime
 
         self.ros = RosRuntime()
-        self.processes = ProcessManager()
+        self.processes = ProcessManager(STATE_DIR / "components.json")
         self.processes.set_probe(self._probe)
         self.pointcloud = PointCloudLink(self.ros, cfg.get("pointcloud_topics"))
+        self.pose_tracking = PoseTrackingLink(self.ros, cfg.get("pose_tracking_topics"))
         self.cluster = Cluster()
         dc = cfg["data_collector"]
         self.collection = DataCollection(lambda: self.ros.call_trigger(dc["trigger_service"]))
@@ -108,6 +111,11 @@ class Studio:
         self.halted = False
         from franka_studio.calibration import AutoCalibration
         self.calibration = AutoCalibration(self.ros, cfg["calibration"], self._save_static_pose, self.notify)
+        from franka_studio.object_scan import ObjectScan
+        self.object_scan = ObjectScan(self.ros, self.pose_tracking, cfg["object_scan"], cfg["calibration"]["arms"],
+                                      cfg["calibration"]["static"], self.notify)
+        self.object_scan.prepare = self._prepare_object_scan
+        self.object_scan.on_done = lambda _results: self._reload_objects()
 
         _start_ros2_daemon()
         projects = self.projects()
@@ -204,6 +212,7 @@ class Studio:
             self.modalities = mods.load_modalities(project.env_config)
             self.enabled_modalities = mods.resolve_enabled(
                 self.modalities, self.state.project(project_id).get("modalities"))
+            self.pose_tracking.set_objects(object_specs(object_list(project.env_config, project.root), project.root))
             self.project_env = self._make_project_env()
             self._set_view(self.project_env)
             self.pointcloud.set_cameras((project.env_config.get("scene") or {}).get("cameras") or {})
@@ -216,7 +225,8 @@ class Studio:
         if not project or not project.env_config:
             return None
         project.env_config.setdefault("_language", False)
-        config = mods.apply(project.env_config, self.modalities, self.enabled_modalities)
+        config = with_object_poses(project.env_config, self.pose_tracking.specs)
+        config = mods.apply(config, self.modalities, self.enabled_modalities)
         return self._make_env(config, f"{project.name} · scene")
 
     def _make_env(self, config: dict, name: str) -> SceneEnv:
@@ -394,6 +404,8 @@ class Studio:
             return self._result(False, "Stop the recording before running the policy.")
         if self.calibration.state == "running":
             return self._result(False, "A camera calibration is running.")
+        if self.object_scan.state == "running":
+            return self._result(False, "An object scan is running.")
         if self.active_env is not None:
             self.active_env.stop_home()   # both would drive the joints
         if self.halted:
@@ -429,6 +441,7 @@ class Studio:
         if self.runner and self.runner.running:
             self.runner.stop()
         self.calibration.stop("Stop pressed")
+        self.object_scan.stop("Stop pressed")
         if self.active_env is not None:
             self.active_env.stop_home()
         self.notify("STOP: the arms hold where they are; teleop and all commands are ignored until Resume.", "warn")
@@ -447,6 +460,8 @@ class Studio:
     def calibration_start(self, arms: object) -> dict:
         if self.collection.recording:
             return self._result(False, "Stop the recording first.")
+        if self.object_scan.state == "running":
+            return self._result(False, "An object scan is running.")
         if self.runner and self.runner.running:
             self.runner.stop()
         if self.active_env is not None:
@@ -465,6 +480,59 @@ class Studio:
         out = self._result(result["ok"], result["message"])
         out["restart_robots"] = result.get("restart_robots", False)
         return out
+
+    # ---- objects (pose tracking) ------------------------------------------------------------------------
+
+    def _reload_objects(self) -> None:
+        """Sends the project's objects to the node again (new list, new meshes) and redraws the scene."""
+        project = self.project
+        if not project:
+            return
+        with self._lock:
+            self.pose_tracking.set_objects(object_specs(object_list(project.env_config, project.root), project.root))
+            if self.project_env is not None:  # suspended while a policy is loaded: rebuilt on unload
+                self.project_env.close()
+                self.project_env = self._make_project_env()
+                if self.active_env is self.project_env:
+                    self._set_view(self.project_env)
+
+    def objects_set(self, objects: object) -> dict:
+        """The Objects card's list -> the project's objects/objects.yaml."""
+        if not self.project:
+            return self._result(False, "No project selected.")
+        if self.object_scan.state == "running":
+            return self._result(False, "A scan is running.")
+        if self.collection.recording:
+            return self._result(False, "Stop the recording first.")
+        cleaned, error = clean_objects(objects)
+        if error:
+            return self._result(False, error)
+        save_object_list(self.project.root, cleaned)
+        self._reload_objects()
+        return self._result(True, f"{len(cleaned)} objects." if cleaned else "No objects.")
+
+    def _prepare_object_scan(self) -> None:
+        """The scan needs the RGB-D of every camera (Point cloud) and the node (Object poses)."""
+        mod = next((mid for mid, m in self.modalities.items() if m.component == "pose_tracking"), None)
+        if mod:
+            self.set_modality(mod, True)    # starts its component, draws the objects
+        for name in ("pointcloud", "pose_tracking"):
+            if self.processes.get(name) and not self.processes.is_up(name):
+                self.processes.start(name)
+
+    def objects_scan(self) -> dict:
+        if not self.project:
+            return self._result(False, "No project selected.")
+        if self.collection.recording:
+            return self._result(False, "Stop the recording first.")
+        if self.calibration.state == "running":
+            return self._result(False, "A camera calibration is running.")
+        if self.runner and self.runner.running:
+            self.runner.stop()
+        if self.active_env is not None:
+            self.active_env.stop_home()
+        objects = [{"name": s["name"], "prompt": s["prompt"]} for s in self.pose_tracking.specs]
+        return self._result(*_ok_msg(self.object_scan.start(objects, str(self.project.root / "objects"))))
 
     # ---- data collection -----------------------------------------------------------------------------
 
@@ -612,6 +680,7 @@ class Studio:
             "modalities": self._modality_status() if project else [],
             "record_topics": mods.record_topics(self.modalities, self.enabled_modalities) if project else [],
             "pointcloud": self.pointcloud.snapshot(),
+            "pose_tracking": self.pose_tracking.snapshot(),
             "datasets": self.datasets(),
             "tasks": project.tasks if project else {},
             "conversion_configs": [str(p.relative_to(project.root / "conversion")) for p in project.files("conversion")] if project else [],
@@ -622,6 +691,7 @@ class Studio:
                        "enabled": self.viewer is not None},
             "halted": self.halted,
             "calibration": self.calibration.snapshot(),
+            "object_scan": self.object_scan.snapshot(),
             "events": events,
         }
 

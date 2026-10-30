@@ -474,3 +474,16 @@ body.is-halted .topbar { box-shadow: inset 0 -2px 0 var(--danger); }
 .calib-save { display: flex; gap: 8px; margin-top: 10px; }
 .calib-save input, .calib-save select { flex: 1; min-width: 0; }
 .calib-restart { margin-top: 10px; width: 100%; }
+
+/* objects card */
+.obj-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+.obj-list .empty { font-size: 12.5px; }
+.obj-row { display: grid; grid-template-columns: 1fr auto auto; gap: 6px; align-items: center; }
+.obj-row input { min-width: 0; }
+.obj-state { font-size: 11.5px; padding: 3px 8px; border-radius: 99px; background: var(--surface-3); color: var(--muted); white-space: nowrap; }
+.obj-state.tracking { color: var(--ok); background: var(--ok-soft); }
+.obj-state.mesh { color: var(--text-2); }
+.obj-state.lost, .obj-state.error { color: var(--warn); background: var(--warn-soft); }
+.obj-add { display: flex; gap: 8px; margin-bottom: 4px; }
+.obj-add input { flex: 1; min-width: 0; }
+#objects-card .btn-row { margin-top: 10px; }

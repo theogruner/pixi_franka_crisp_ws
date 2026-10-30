@@ -72,6 +72,7 @@
         </div>
         <div class="modalities" id="modalities"></div>
         <div class="pc-status" id="pc-status" hidden></div>
+        <div class="pc-status" id="pt-status" hidden></div>
         <div class="record-line" id="record-line"></div>
       </section>
 
@@ -246,6 +247,25 @@
           <button class="link-btn" id="unload-btn">Unload policy</button>
         </div>
         <button class="btn btn-primary btn-block" id="load-btn" disabled><svg class="i"><use href="#i-download"/></svg>Load policy</button>
+      </section>
+
+      <section class="card" id="objects-card">
+        <div class="card-head">
+          <h2><svg class="i"><use href="#i-cube"/></svg>Objects</h2>
+          <span class="muted small" id="objects-sub"></span>
+        </div>
+        <div class="obj-list" id="obj-list"></div>
+        <form class="obj-add" id="obj-add-form">
+          <input id="obj-new" placeholder="Object to track, e.g. white mug" autocomplete="off" spellcheck="false">
+          <button class="btn btn-soft" type="submit">Add</button>
+        </form>
+        <p class="muted small calib-hint">Each name is the segmenter's text prompt. Unknown objects: <b>Scan</b> moves the wrist
+          cameras around them, builds a mesh per object and starts tracking at the scanned poses (Point cloud and Object poses start by themselves).</p>
+        <div class="btn-row">
+          <button class="btn btn-primary" id="obj-scan"><svg class="i"><use href="#i-target"/></svg>Scan &amp; estimate poses</button>
+          <button class="btn btn-stop" id="obj-stop" hidden><svg class="i"><use href="#i-stop"/></svg>Stop</button>
+        </div>
+        <div class="calib-progress" id="obj-progress" hidden></div>
       </section>
 
       <section class="card" id="collect-card">

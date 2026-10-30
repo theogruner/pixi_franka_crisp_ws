@@ -145,7 +145,7 @@ class SceneViewer:
             self.show_cams = gui.add_checkbox("Camera frustums", True)
             self.show_obs_cloud = gui.add_checkbox("Observation point cloud", True,
                                                    hint="The sampled point cloud the policy gets")
-            self.point_size = gui.add_slider("Point size", 0.001, 0.02, 0.001, 0.004)
+            self.point_size = gui.add_slider("Point size", 0.001, 0.02, 0.001, 0.002)
             self.frustum_size = gui.add_slider("Camera image size", 0.02, 0.3, 0.01, 0.06)
         # Static cameras without extrinsics are drawn at a guessed pose; place them here.
         self.on_save_camera = None     # set by the studio: fn(name, position, wxyz) -> str
@@ -286,7 +286,8 @@ class SceneViewer:
             cfg = cfgs.get(name, {})
             color = tuple(cfg.get("color", POSE_COLORS[i % len(POSE_COLORS)]))
             h = self._node(f"/poses/{name}", lambda name=name, color=color, cfg=cfg: self.server.scene.add_frame(
-                f"/poses/{name}", axes_length=float(cfg.get("axes_length", 0.06)), axes_radius=0.003,
+                f"/poses/{name}", axes_length=float(cfg.get("axes_length", 0.06)),
+                axes_radius=float(cfg.get("axes_radius", 0.003)),
                 origin_radius=0.008, origin_color=color))
             h.position, h.wxyz, h.visible = pose.position, pose.wxyz, self.show_frames.value
             if cfg.get("label", True):

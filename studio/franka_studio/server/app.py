@@ -70,6 +70,9 @@ def build_app(studio: Studio) -> web.Application:
         "calibration/stop": (studio.halt, []),          # stopping a calibration is a Stop
         "calibration/save": (studio.calibration_save, ["name"]),
         "calibration/apply": (studio.calibration_apply, ["name"]),
+        "objects/set": (studio.objects_set, ["objects"]),
+        "objects/scan": (studio.objects_scan, []),
+        "objects/stop": (studio.halt, []),               # stopping a scan is a Stop, as for calibration
     }
 
     async def action(request: web.Request) -> web.Response:

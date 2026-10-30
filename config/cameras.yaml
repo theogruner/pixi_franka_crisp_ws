@@ -33,6 +33,10 @@ pointcloud:
   # (output/onnx_320x480: same model without the plugin; disparities equal to ~0.01 px)
   engine: output/plugin_320x480/fast_foundationstereo.engine   # relative to repo
   rate: 10.0                  # Hz cap of the merged cloud
+  # Post-processing (depth -> points -> world -> merge): torch on the GPU or numpy on the CPU;
+  # auto = torch when it has CUDA. On the Orin the GPU is the bottleneck (engine + ZED), so numpy
+  # can be the faster one there.
+  backend: auto               # auto | torch | numpy
   topic: /ffs/points          # sensor_msgs/PointCloud2, x y z rgb, frame world_frame
   world_frame: world
   zfar: 1.5                   # m, per camera

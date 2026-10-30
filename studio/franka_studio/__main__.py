@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import logging
+import signal
 
 from aiohttp import web
 
@@ -40,6 +42,14 @@ def main() -> None:
     async def on_shutdown(_app: web.Application) -> None:
         studio.shutdown(stop_components=not args.keep_components)
 
+    async def on_startup(_app: web.Application) -> None:
+        # a closed terminal (SIGHUP) shuts down like Ctrl-C / SIGTERM, stopping the components
+        def hangup() -> None:
+            raise web.GracefulExit()
+
+        asyncio.get_running_loop().add_signal_handler(signal.SIGHUP, hangup)
+
+    app.on_startup.append(on_startup)
     app.on_shutdown.append(on_shutdown)
     shown = "localhost" if host in ("0.0.0.0", "127.0.0.1") else host
     print(f"\n  Franka Studio  →  http://{shown}:{port}\n", flush=True)
