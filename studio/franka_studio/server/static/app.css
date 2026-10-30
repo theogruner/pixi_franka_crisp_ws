@@ -171,6 +171,13 @@ em { font-style: normal; }
 .sub-head.with-action { display: flex; align-items: center; justify-content: space-between; }
 .empty { color: var(--muted); font-size: 13px; padding: 14px; text-align: center; border: 1px dashed var(--border-strong); border-radius: var(--radius-sm); }
 
+/* draggable widgets: grab a card by its title */
+.drag-handle { cursor: grab; user-select: none; }
+.card.dragging { opacity: .4; }
+.drop-slot { border: 2px dashed var(--accent); border-radius: var(--radius); background: var(--accent-soft); min-height: 64px; }
+body.dragging-card iframe { pointer-events: none; }
+body.dragging-card .rail, body.dragging-card .center { min-height: 120px; }
+
 /* ---------- buttons & fields ---------- */
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;

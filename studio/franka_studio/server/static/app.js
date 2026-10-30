@@ -797,6 +797,76 @@ function wireSizes() {
   });
 }
 
+// Widget layout: drag a card by its title into any column (remembered in this browser).
+// The card moves once on drop (a drop slot follows the pointer), so the viewer iframe reloads only then.
+const LAYOUT_KEY = "studio-layout";
+function wireLayout() {
+  const cols = [...document.querySelectorAll("[data-col]")];
+  const cards = () => cols.flatMap((c) => [...c.querySelectorAll(":scope > .card[id]")]);
+  const save = () => {
+    const layout = Object.fromEntries(cols.map((c) => [c.dataset.col, [...c.querySelectorAll(":scope > .card[id]")].map((x) => x.id)]));
+    try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout)); } catch (e) {}
+  };
+  try {
+    const layout = JSON.parse(localStorage.getItem(LAYOUT_KEY) || "null");
+    for (const col of cols) for (const id of layout?.[col.dataset.col] ?? []) {
+      const card = document.getElementById(id);
+      if (card?.classList.contains("card")) col.appendChild(card);
+    }
+  } catch (e) {}
+
+  const slot = document.createElement("div");
+  slot.className = "drop-slot";
+  let dragged = null;
+  for (const card of cards()) {
+    const handle = card.querySelector(".card-head h2, .viewer-title h2");
+    if (!handle) continue;
+    handle.classList.add("drag-handle");
+    handle.title = "Drag to move this widget";
+    // only the title starts a drag, so inputs, sliders and text selection inside the card keep working
+    handle.addEventListener("pointerdown", () => { card.draggable = true; });
+    card.addEventListener("dragstart", (e) => {
+      if (e.target !== card) return;
+      dragged = card;
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", card.id);
+      slot.style.height = `${Math.min(card.offsetHeight, 160)}px`;
+      requestAnimationFrame(() => { card.classList.add("dragging"); document.body.classList.add("dragging-card"); });
+    });
+    card.addEventListener("dragend", () => {
+      card.draggable = false;
+      card.classList.remove("dragging");
+      document.body.classList.remove("dragging-card");
+      slot.remove();
+      dragged = null;
+    });
+  }
+  document.addEventListener("pointerup", () => cards().forEach((c) => { if (c !== dragged) c.draggable = false; }));
+
+  for (const col of cols) {
+    col.addEventListener("dragover", (e) => {
+      if (!dragged) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      const after = [...col.querySelectorAll(":scope > .card:not(.dragging):not([hidden])")]
+        .find((c) => { const r = c.getBoundingClientRect(); return e.clientY < r.top + r.height / 2; });
+      if (after) { if (slot.nextElementSibling !== after) col.insertBefore(slot, after); }
+      else if (col.lastElementChild !== slot) col.appendChild(slot);
+    });
+    col.addEventListener("drop", (e) => {
+      if (!dragged || slot.parentNode !== col) return;
+      e.preventDefault();
+      col.replaceChild(dragged, slot);
+      save();
+    });
+  }
+  $("#layout-reset").onclick = () => {
+    try { localStorage.removeItem(LAYOUT_KEY); } catch (e) {}
+    location.reload();
+  };
+}
+
 wire();
 wireSizes();
+wireLayout();
 connect();

@@ -44,6 +44,8 @@
       <button class="btn btn-resume" id="resume-btn" hidden title="Accept commands again (Run policy resumes by itself)">
         <svg class="i"><use href="#i-play"/></svg>Resume</button>
       <div class="conn" id="conn" title="Connection to the studio"><span class="dot"></span><span>offline</span></div>
+      <button class="icon-btn" id="layout-reset" title="Reset the widget layout (drag a widget by its title to move it)">
+        <svg class="i"><use href="#i-layout"/></svg></button>
       <button class="icon-btn" id="theme-toggle" title="Toggle light / dark">
         <svg class="i theme-dark"><use href="#i-moon"/></svg>
         <svg class="i theme-light"><use href="#i-sun"/></svg>
@@ -53,7 +55,7 @@
 
   <main class="layout">
     <!-- ============ left rail ============ -->
-    <aside class="rail rail-left">
+    <aside class="rail rail-left" data-col="left">
       <section class="card" id="stack-card">
         <div class="card-head">
           <h2><svg class="i"><use href="#i-layers"/></svg>Stack</h2>
@@ -138,8 +140,8 @@
     </aside>
 
     <!-- ============ center ============ -->
-    <section class="center">
-      <section class="card viewer-card">
+    <section class="center" data-col="center">
+      <section class="card viewer-card" id="viewer-card">
         <div class="viewer-head">
           <div class="viewer-title">
             <h2><svg class="i"><use href="#i-cube"/></svg>Scene</h2>
@@ -173,7 +175,7 @@
         <div class="cams cams-wide" id="rig-cams"></div>
       </section>
 
-      <section class="card obs-card">
+      <section class="card obs-card" id="obs-card">
         <div class="card-head">
           <h2><svg class="i"><use href="#i-eye"/></svg>Observation <span class="muted small">— exactly what the policy is fed</span></h2>
           <div class="card-actions">
@@ -186,7 +188,7 @@
         <div class="features" id="features"></div>
       </section>
 
-      <section class="card console-card">
+      <section class="card console-card" id="console-card">
         <div class="card-head">
           <h2><svg class="i"><use href="#i-terminal"/></svg>Console</h2>
           <div class="tabs" id="log-tabs"></div>
@@ -200,7 +202,7 @@
     </section>
 
     <!-- ============ right rail ============ -->
-    <aside class="rail rail-right">
+    <aside class="rail rail-right" data-col="right">
       <section class="card" id="policy-card">
         <div class="card-head">
           <h2><svg class="i"><use href="#i-brain"/></svg>Policy</h2>
@@ -348,6 +350,7 @@
       <symbol id="i-server" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="8" rx="2"/><rect x="3" y="13" width="18" height="8" rx="2"/><path d="M7 7h.01M7 17h.01"/></symbol>
       <symbol id="i-box" viewBox="0 0 24 24"><path d="m21 8-9-5-9 5 9 5z"/><path d="M3 8v8l9 5 9-5V8M12 13v8"/></symbol>
       <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 9"/></symbol>
+      <symbol id="i-layout" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18M9 12h12"/></symbol>
       <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
     </defs>
   </svg>
