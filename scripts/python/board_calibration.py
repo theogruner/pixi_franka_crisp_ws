@@ -3,6 +3,7 @@
     pixi run calibrate-board                    # capture (Enter per pose) + solve
     pixi run calibrate-board --once             # one capture, solve
     pixi run calibrate-board --samples calibration/board_X.json     # solve saved captures again
+    pixi run calibrate-board --samples A.json B.json     # sessions with the board elsewhere, together
     ... [--marker 0.0562 --sep 0.0067] [--write [--project example]]
 
 The board's pose is not needed: it is one more unknown. Every capture takes the next image of
@@ -11,7 +12,9 @@ the markers and, for wrist cameras, the flange pose (TF ``world <- <robot>_fr3_l
 image stamp; the arm has to hold still). One bundle adjustment over all captures then minimises
 the reprojection error of every detected marker corner over
 
-* ``B``  the board in the world,
+* ``B``  the board in the world, once per placement (sessions with the board moved in between
+         are solved together: the more of the workspace the board covered, the less a small
+         rotation error grows away from it),
 * ``M``  every static camera in the world (zed_middle),
 * ``C``  per wrist camera, a correction of its mount on the flange (link8 <- link8'), and
 * ``D``  per robot other than the reference (``franka_right``, whose base defines the world),
@@ -27,6 +30,12 @@ What a session can determine:
 * Several captures with the wrist turned about different axes (>= 3, >= 15 deg apart, the board
   in view; hand guiding or teleop, hold still at each): ``C`` of that wrist, and for the left arm
   its base correction ``D`` as well. A wrist without enough variety keeps its description pose.
+* A run is weak (see ``Problem.weak``) when a wrist saw the board in fewer than ``GOOD_VIEWS``
+  views or turned less than ``GOOD_SPREAD_DEG``, or a pose is pinned down worse than
+  ``MAX_STD_MM`` / ``MAX_STD_DEG``: run again or add a placement rather than using it.
+
+Point clouds captured with the images (``<captures>.clouds.npz``, the studio stores them) fine-tune
+the board solution: see cloud_refine.py.
 
 Board: ``--dict``/``--cols``/``--rows``/``--first-id`` describe the grid (default: DICT_4X4_50,
 3 x 4 markers, ids 0..11 row-major, as printed by cv2.aruco.GridBoard). Measure the printed
@@ -59,6 +68,8 @@ import yaml
 from scipy.optimize import least_squares
 from scipy.spatial.transform import Rotation
 
+import cloud_refine
+
 WS = Path(__file__).resolve().parents[2]
 PREFIX = "/zed_multi"
 ARM_ID = "fr3"
@@ -69,6 +80,8 @@ LAUNCH_CONFIG = WS / "src/franka_launch/config/dfki_fr3_{side}.yaml"
 STILL_M, STILL_DEG = 0.001, 0.2       # flange motion within 0.3 s before the image that counts as still
 MIN_SAMPLES, MIN_SPREAD_DEG = 3, 15.0  # wrist rotation variety needed to solve its mount
 MIN_MARKERS = 2
+GOOD_VIEWS, GOOD_SPREAD_DEG = 10, 35.0   # a wrist calibrated from fewer views / less rotation: weak run
+MAX_STD_MM, MAX_STD_DEG = 5.0, 0.6       # 1-sigma of a solved pose above this: weak run
 # The printed board's white border is narrower than OpenCV likes; it is only used as a model here.
 cv2.utils.logging.setLogLevel(cv2.utils.logging.LOG_LEVEL_ERROR)
 
@@ -328,13 +341,14 @@ class Capture:
 def observations(data: dict, board: Board) -> list[dict]:
     obs = []
     for k, sample in enumerate(data["samples"]):
+        intrinsics = sample.get("intrinsics") or data["intrinsics"]   # merged sessions carry their own
         for cam, e in sample["cams"].items():
             det = {int(i): np.asarray(c) for i, c in e["left"].items()}
             if len(det) < MIN_MARKERS or (cam in data["robot_frames"] and "flange" not in e):
                 continue
             obj, img = board.points(det)
-            obs.append({"sample": k, "cam": cam, "obj": obj, "img": img,
-                        "K": np.asarray(data["intrinsics"][cam]["K"]),
+            obs.append({"sample": k, "placement": int(sample.get("placement", 0)), "cam": cam, "obj": obj,
+                        "img": img, "K": np.asarray(intrinsics[cam]["K"]),
                         "flange": np.asarray(e["flange"]) if "flange" in e else None})
     return obs
 
@@ -343,12 +357,76 @@ def rotation_spread(flanges: list[np.ndarray]) -> float:
     return max((angle_deg(a[:3, :3].T @ b[:3, :3]) for a, b in itertools.combinations(flanges, 2)), default=0.0)
 
 
+def rebase(ref_frames: dict, frames: dict) -> dict[str, np.ndarray]:
+    """Per wrist camera: what turns a flange pose (TF world <- link8) taken with ``frames`` into one
+    taken with ``ref_frames``. A base correction applied in between moves link0 in TF, not the arm."""
+    out = {}
+    for cam, f in frames.items():
+        ref = ref_frames.get(cam)
+        if ref is None:
+            raise RuntimeError(f"{cam} is not in the first session")
+        if f.get("base") is not None and ref.get("base") is not None:
+            out[cam] = np.asarray(ref["base"]) @ np.linalg.inv(np.asarray(f["base"]))
+        else:
+            out[cam] = np.eye(4)
+    return out
+
+
+def merge_captures(parts: list[tuple[dict, dict]]) -> tuple[dict, dict]:
+    """Captures of several sessions (data, clouds) as one: each session's placements get their own
+    numbers, its flanges are expressed in the first session's robot bases and its intrinsics go with
+    its samples (a camera can be recalibrated in between; its pose then has to stay)."""
+    first = parts[0][0]
+    out, clouds, placements = {**first, "samples": []}, {}, {}
+    for n, (data, part_clouds) in enumerate(parts):
+        if {k: data["board"][k] for k in ("dict", "cols", "rows", "marker", "sep")} != \
+                {k: first["board"][k] for k in ("dict", "cols", "rows", "marker", "sep")}:
+            raise RuntimeError(f"session {n + 1} used another board")
+        moved = rebase(first["robot_frames"], data["robot_frames"])
+        for k, sample in enumerate(data["samples"]):
+            cams = {}
+            for cam, e in sample["cams"].items():
+                if "flange" in e:
+                    e = {**e, "flange": (moved[cam] @ np.asarray(e["flange"])).tolist()}
+                cams[cam] = e
+            placement = placements.setdefault((n, sample.get("placement", 0)), len(placements))
+            out["samples"].append({**sample, "cams": cams, "placement": placement, "intrinsics": data["intrinsics"]})
+            for cam in cams:
+                if (k, cam) in part_clouds:
+                    clouds[(len(out["samples"]) - 1, cam)] = part_clouds[(k, cam)]
+    return out, clouds
+
+
+def clouds_path(captures: Path) -> Path:
+    return captures.with_suffix(".clouds.npz")
+
+
+def save_clouds(path: Path, clouds: dict) -> None:
+    np.savez_compressed(path, **{f"{k}/{cam}": xyz for (k, cam), xyz in clouds.items()})
+
+
+def load_clouds(path: Path) -> dict:
+    """{(sample index, camera): (N, 3) camera-frame points}; {} without the file."""
+    if not path.is_file():
+        return {}
+    with np.load(path) as f:
+        return {(int(key.split("/")[0]), key.split("/", 1)[1]): f[key] for key in f.files}
+
+
+def load_captures(paths: list[Path]) -> tuple[dict, dict]:
+    parts = [(json.loads(p.read_text()), load_clouds(clouds_path(p))) for p in paths]
+    return parts[0] if len(parts) == 1 else merge_captures(parts)
+
+
 class Problem:
     def __init__(self, data: dict, board: Board, reference_robot: str = REFERENCE_ROBOT,
-                 min_samples: int = MIN_SAMPLES, min_spread_deg: float = MIN_SPREAD_DEG) -> None:
+                 min_samples: int = MIN_SAMPLES, min_spread_deg: float = MIN_SPREAD_DEG,
+                 clouds: dict | None = None) -> None:
         """``reference_robot``: its base defines the world (the others' bases are corrected);
-        ``min_samples`` / ``min_spread_deg``: wrist views and rotation spread to solve a mount."""
+        ``min_samples`` / ``min_spread_deg``: wrist views and rotation spread to solve a mount;
+        ``clouds``: {(sample, camera): camera-frame points} to fine-tune with (cloud_refine.py)."""
         self.board = board
+        self.clouds = clouds or {}
         self.reference = reference_robot
         self.frames = {cam: {k: (np.asarray(v) if v is not None and k != "robot" else v) for k, v in f.items()}
                        for cam, f in data["robot_frames"].items()}
@@ -371,7 +449,12 @@ class Problem:
                          or o["cam"] in self.free_base)
         if not any(o["used"] and o["flange"] is not None for o in self.obs):
             raise RuntimeError(f"no camera of {reference_robot} saw the board: nothing ties it to the world")
-        self.blocks = (["B"] + [f"M:{c}" for c in self.static] + [f"C:{c}" for c in self.free_mount]
+        # One board pose per placement; a placement no fitted camera saw tells nothing
+        self.placements = sorted({o["placement"] for o in self.obs if o["used"]})
+        self.obs = [o for o in self.obs if o["placement"] in self.placements]
+        self.cams = sorted({o["cam"] for o in self.obs})
+        self.static = [c for c in self.static if c in self.cams]
+        self.blocks = ([f"B:{p}" for p in self.placements] + [f"M:{c}" for c in self.static] + [f"C:{c}" for c in self.free_mount]
                        + [f"D:{c}" for c in self.free_base])
         self.x0 = self._initial()
 
@@ -398,7 +481,9 @@ class Problem:
             return None
         X = np.eye(4)
         X[:3, :3], X[:3, 3] = R, np.asarray(tvec).ravel()
-        return X if np.all(np.isfinite(X)) else None
+        # too little variety (few views, parallel axes): no proper rotation
+        ok = np.all(np.isfinite(X)) and np.allclose(X[:3, :3].T @ X[:3, :3], np.eye(3), atol=1e-3) and np.linalg.det(X[:3, :3]) > 0
+        return X if ok else None
 
     def _initial(self) -> np.ndarray:
         x: dict = {}
@@ -406,20 +491,32 @@ class Problem:
             X = self._hand_eye(c)
             if X is not None:
                 x[f"C:{c}"] = X @ np.linalg.inv(self.frames[c]["optical"])
-        boards = []
+        boards: dict[int, list] = {}
         for o in self.obs:
             if o["flange"] is not None and o["used"] and o["cam"] not in self.free_base:
-                boards.append(self.wrist_pose(o["cam"], o["flange"], x) @ self._pnp(o))
-        B = boards[0].copy()
-        B[:3, 3] = np.mean([b[:3, 3] for b in boards], axis=0)
-        x["B"] = B
+                boards.setdefault(o["placement"], []).append(self.wrist_pose(o["cam"], o["flange"], x) @ self._pnp(o))
+        for p, seen in boards.items():
+            B = seen[0].copy()
+            B[:3, 3] = np.mean([b[:3, 3] for b in seen], axis=0)
+            x[f"B:{p}"] = B
+
+        def first_with_board(cam: str) -> dict:
+            o = next((o for o in self.obs if o["cam"] == cam and f"B:{o['placement']}" in x), None)
+            if o is None:
+                raise RuntimeError(f"{cam} never saw the board together with a camera of {self.reference}")
+            return o
+
         for c in self.free_base:    # base corrections: where that arm puts the board vs. B
-            o = next(o for o in self.obs if o["cam"] == c)
+            o = first_with_board(c)
             seen = self.wrist_pose(c, o["flange"], x) @ self._pnp(o)
-            x[f"D:{c}"] = B @ np.linalg.inv(seen)
+            x[f"D:{c}"] = x[f"B:{o['placement']}"] @ np.linalg.inv(seen)
         for c in self.static:
-            o = next(o for o in self.obs if o["cam"] == c)
-            x[f"M:{c}"] = B @ np.linalg.inv(self._pnp(o))
+            o = first_with_board(c)
+            x[f"M:{c}"] = x[f"B:{o['placement']}"] @ np.linalg.inv(self._pnp(o))
+        for p in self.placements:   # seen by the reference robot's cameras only through the others
+            if f"B:{p}" not in x:
+                o = next(o for o in self.obs if o["placement"] == p and o["used"])
+                x[f"B:{p}"] = self.camera_pose(o, x) @ self._pnp(o)
         return self.pack(x)
 
     def _pnp(self, o: dict) -> np.ndarray:
@@ -439,7 +536,7 @@ class Problem:
         return x[f"M:{o['cam']}"] if o["flange"] is None else self.wrist_pose(o["cam"], o["flange"], x)
 
     def project(self, o: dict, x: dict) -> np.ndarray:
-        T = np.linalg.inv(self.camera_pose(o, x)) @ x["B"]
+        T = np.linalg.inv(self.camera_pose(o, x)) @ x[f"B:{o['placement']}"]
         p = o["obj"] @ T[:3, :3].T + T[:3, 3]
         uv = p @ o["K"].T
         return uv[:, :2] / uv[:, 2:3]
@@ -456,17 +553,38 @@ class Problem:
             out[c] = float(np.sqrt(np.mean(np.sum(r ** 2, axis=1))))
         return out
 
-    def solve(self) -> tuple[dict, dict]:
-        res = least_squares(self.residuals, self.x0, loss="soft_l1", f_scale=1.0, x_scale="jac", max_nfev=200)
-        # 1-sigma of every block from the Gauss-Newton covariance
+    def block_std(self, res) -> dict:
+        """1-sigma (deg, mm) of every block from the Gauss-Newton covariance of a least_squares result
+        (the blocks' parameters first)."""
         J = res.jac
         dof = max(len(res.fun) - len(res.x), 1)
         sigma2 = float(np.sum(res.fun ** 2) / dof)
         cov = np.linalg.pinv(J.T @ J) * sigma2
-        std = {b: (float(np.degrees(np.sqrt(np.trace(cov[6 * i:6 * i + 3, 6 * i:6 * i + 3])))),
-                   float(1e3 * np.sqrt(np.trace(cov[6 * i + 3:6 * i + 6, 6 * i + 3:6 * i + 6]))))
-               for i, b in enumerate(self.blocks)}
-        return {"x": self.unpack(res.x), "v": res.x, "std": std}, self.rms(res.x)
+        return {b: (float(np.degrees(np.sqrt(np.trace(cov[6 * i:6 * i + 3, 6 * i:6 * i + 3])))),
+                    float(1e3 * np.sqrt(np.trace(cov[6 * i + 3:6 * i + 6, 6 * i + 3:6 * i + 6]))))
+                for i, b in enumerate(self.blocks)}
+
+    def solve(self) -> tuple[dict, dict]:
+        """Board solve, then fine-tuned with the clouds if there are any (``result["cloud"]``)."""
+        res = least_squares(self.residuals, self.x0, loss="soft_l1", f_scale=1.0, x_scale="jac", max_nfev=200)
+        result = {"x": self.unpack(res.x), "v": res.x, "std": self.block_std(res)}
+        if self.clouds:
+            result = cloud_refine.refine(self, result, self.clouds)
+        return result, self.rms(result["v"])
+
+    def weak(self, result: dict, wrists: list[str] | None = None) -> list[str]:
+        """Why this solution is not to be trusted (empty: fine). ``wrists``: the wrist cameras meant
+        to be calibrated (default: those that were)."""
+        out = []
+        for c in (self.free_mount if wrists is None else wrists):
+            n, spread = self.count.get(c, 0), self.spread.get(c, 0.0)
+            if n < GOOD_VIEWS or spread < GOOD_SPREAD_DEG:
+                out.append(f"{c}: board in {n} views over {spread:.0f} deg of wrist rotation "
+                           f"(needs {GOOD_VIEWS} / {GOOD_SPREAD_DEG:.0f} deg)")
+        for b, (deg, mm) in result.get("std_board", result["std"]).items():
+            if deg > MAX_STD_DEG or mm > MAX_STD_MM:
+                out.append(f"{b}: +-{deg:.2f} deg, {mm:.1f} mm (limit {MAX_STD_DEG} deg, {MAX_STD_MM:.0f} mm)")
+        return out
 
 
 # ---- writing -------------------------------------------------------------------------------------
@@ -540,6 +658,18 @@ def calibration_values(problem: Problem, result: dict) -> dict:
     return out
 
 
+def summary(problem: Problem, result: dict, rms0: dict, rms: dict, wrists: list[str] | None = None) -> dict:
+    """A solve as JSON (the studio runs it with ``--json``)."""
+    return {"values": calibration_values(problem, result),
+            "rms": {c: round(v, 3) for c, v in rms.items()}, "rms_before": {c: round(v, 3) for c, v in rms0.items()},
+            "std": {k: {"deg": round(v[0], 3), "mm": round(v[1], 2)} for k, v in result["std"].items()},
+            "reference": problem.reference, "solved_mounts": problem.free_mount,
+            "solved_bases": [problem.frames[c]["robot"] for c in problem.free_base],
+            "placements": len(problem.placements), "views": {c: sum(o["cam"] == c for o in problem.obs) for c in problem.cams},
+            "weak": problem.weak(result, wrists),
+            "cloud": result.get("cloud") or {"used": False, "message": "no point clouds captured (point cloud node off?)"}}
+
+
 def write_robot_values(robots: dict) -> list[Path]:
     """Writes {robot: {key: value}} into src/franka_launch/config/dfki_fr3_<side>.yaml (restart the robots)."""
     paths = []
@@ -552,6 +682,8 @@ def write_robot_values(robots: dict) -> list[Path]:
 
 def report(problem: Problem, result: dict, rms0: dict, rms: dict, write: bool, project: str | None) -> None:
     x, std = result["x"], result["std"]
+    weak = problem.weak(result)
+    requested, write = write, write and not weak
     print(f"\nboard {problem.board.marker * 1e3:.1f} mm markers, {problem.board.sep * 1e3:.1f} mm gaps; "
           f"{len(problem.obs)} detections")
     for c in problem.cams:
@@ -577,10 +709,25 @@ def report(problem: Problem, result: dict, rms0: dict, rms: dict, write: bool, p
         print(f"  {a} vs {b}: {1e3 * d:.1f} mm apart at the board centre, {angle_deg(Am[:3, :3].T @ Bm[:3, :3]):.2f} deg")
 
     print("\nresult (1 sigma: image noise only, not the error of a mount that was kept):")
-    B = x["B"]
-    print(f"  board centre in world {np.round((B @ centre)[:3], 4).tolist()}  "
-          f"(+-{std['B'][0]:.2f} deg, {std['B'][1]:.1f} mm), "
-          f"{np.degrees(np.arccos(abs(B[2, 2]))):.1f} deg from horizontal (lying on the table: ~0)")
+    for p in problem.placements:
+        B, s = x[f"B:{p}"], std[f"B:{p}"]
+        print(f"  board {p + 1} centre in world {np.round((B @ centre)[:3], 4).tolist()}  "
+              f"(+-{s[0]:.2f} deg, {s[1]:.1f} mm), "
+              f"{np.degrees(np.arccos(abs(B[2, 2]))):.1f} deg from horizontal (lying on the table: ~0)")
+    cloud = result.get("cloud")
+    if cloud and cloud.get("before"):
+        print("  point clouds, median distance of the wrist clouds to the static clouds:")
+        for c, a in cloud["after"].items():
+            b = cloud["before"][c]
+            print(f"    {c:16s} {b['mm']} -> {a['mm']} mm ({100 * a['matched']:.0f} % of the points within "
+                  f"{1000 * cloud_refine.STATS_DISTANCE:.0f} mm)")
+        if cloud["used"]:
+            print("    depth scale " + ", ".join(f"{c} {s:.4f}" for c, s in cloud["scale"].items())
+                  + "  (1.01: its depth reads 1 % short)")
+        else:
+            print(f"    {cloud['message']}")
+    elif cloud:
+        print(f"  point clouds not used: {cloud['message']}")
     values = calibration_values(problem, result)
     for c in problem.static:
         print(f"  {c}: {values['static'][c]}  (+-{std[f'M:{c}'][0]:.2f} deg, {std[f'M:{c}'][1]:.1f} mm)")
@@ -598,6 +745,11 @@ def report(problem: Problem, result: dict, rms0: dict, rms: dict, write: bool, p
         print(f"  {robot}: " + ", ".join(f'{k}: "{v}"' for k, v in vals.items()))
     for note in values["notes"]:
         print(f"    ({note})")
+    for reason in weak:
+        print(f"  WEAK {reason}")
+    if weak:
+        print("  -> a weak run: capture again (or add a board placement) instead of using it"
+              + ("; nothing written" if requested else ""))
     if write:
         for path in write_robot_values(values["robots"]):
             print(f"    wrote {path.relative_to(WS)}")
@@ -609,7 +761,12 @@ def report(problem: Problem, result: dict, rms0: dict, rms: dict, write: bool, p
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--samples", type=Path, help="solve these saved captures (no ROS)")
+    ap.add_argument("--samples", type=Path, nargs="+", help="solve these saved captures (no ROS); several: "
+                    "sessions with the board moved in between, solved together")
+    ap.add_argument("--no-clouds", action="store_true", help="board only, without the captured point clouds")
+    ap.add_argument("--reference", default=REFERENCE_ROBOT, help="robot whose base defines the world")
+    ap.add_argument("--wrists", help="wrist cameras meant to be calibrated (comma separated; for the weak check)")
+    ap.add_argument("--json", type=Path, help="also write the result here (JSON)")
     ap.add_argument("--out", type=Path, help="where captures are saved (default calibration/board_<time>.json)")
     ap.add_argument("--once", action="store_true", help="capture once, solve, exit")
     ap.add_argument("--dict", default="DICT_4X4_50")
@@ -625,8 +782,9 @@ def main() -> None:
         ap.error("pass both --marker and --sep, or neither")
 
     board = Board(args.dict, args.cols, args.rows, args.first_id)
+    clouds = {}
     if args.samples:
-        data = json.loads(args.samples.read_text())
+        data, clouds = load_captures(args.samples)
     else:
         data = capture(board, args)
     if args.marker is not None:
@@ -635,10 +793,13 @@ def main() -> None:
         board.set_size(data["board"]["marker"], data["board"]["sep"])
     else:
         size_from_stereo(board, data)
-    problem = Problem(data, board)
+    problem = Problem(data, board, reference_robot=args.reference, clouds=None if args.no_clouds else clouds)
     rms0 = problem.rms(problem.x0)
     result, rms = problem.solve()
     report(problem, result, rms0, rms, args.write, args.project)
+    if args.json:
+        wrists = [w for w in (args.wrists or "").split(",") if w] or None
+        args.json.write_text(json.dumps(summary(problem, result, rms0, rms, wrists)))
 
 
 def size_from_stereo(board: Board, data: dict) -> None:

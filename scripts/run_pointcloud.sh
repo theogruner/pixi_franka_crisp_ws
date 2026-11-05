@@ -17,7 +17,7 @@ if [ "$pc_host" = pc ]; then
     echo "Point cloud for rig '$rig' ($cameras) on this PC ($repo)"
     # env -i: not the humble env of this workspace (its PYTHONPATH / ROS overlay); the PC's Fast
     # DDS profile, so the Jetson's images reach the node over the camera link
-    env -i HOME="$HOME" PATH=/usr/bin:/bin FFS_FASTDDS_PROFILE="$ROOT_DIR/config/fastdds_pc.xml" \
+    env -i HOME="$HOME" PATH=/usr/bin:/bin PYTHONFAULTHANDLER=1 FFS_FASTDDS_PROFILE="$ROOT_DIR/config/fastdds_pc.xml" \
         "$(command -v pixi)" run --manifest-path "$repo/pixi.toml" -e gsplat-policy \
         pc-rig-cloud --config-b64 "$pc_config_b64" &
 else
