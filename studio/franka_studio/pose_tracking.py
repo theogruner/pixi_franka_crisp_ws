@@ -140,6 +140,16 @@ class PoseTrackingLink:
         with self._lock:
             self._status, self._status_t = status, time.time()
 
+    def untracked_poses(self) -> set[str]:
+        """Scene pose names (``object/<name>``) of the objects without a current pose: their
+        PoseArray entry is a placeholder (identity before the first pose, the last one while lost)."""
+        with self._lock:
+            status, t = self._status, self._status_t
+        live = status is not None and time.time() - t < STATUS_STALE_S
+        states = (status or {}).get("objects") or {}
+        return {f"object/{s['name']}" for s in self.specs
+                if not live or (states.get(s["name"]) or {}).get("status") != "tracking"}
+
     def snapshot(self) -> dict:
         with self._lock:
             status, t = self._status, self._status_t

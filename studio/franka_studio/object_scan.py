@@ -16,11 +16,17 @@ from views the wrist cameras take around them, so the pose tracking can start ri
 
 Motions as in the camera calibration (motion.py): slow, limited to ``max_offset`` /
 ``max_rotation_deg`` around the start pose and ``min_clearance`` above the table; Stop aborts.
+
+Manual scan (``start(..., manual=True)``, the default of the Objects card): no arm moves on its
+own and nothing is located first; the user brings the wrist cameras to the views that matter
+(teleop, hand guiding), ``command("capture")`` takes one (all cameras, once the arms are
+still), ``command("finish")`` fuses. The node places each object where most views agree.
 """
 
 from __future__ import annotations
 
 import logging
+import queue
 import threading
 import time
 import uuid
@@ -95,6 +101,9 @@ class ObjectScan(ArmMover):
         self.results: dict = {}
         self._token = ""
         self._thread: threading.Thread | None = None
+        self.manual = False
+        self.captures = 0
+        self._commands: queue.Queue = queue.Queue()
         self.prepare = None        # set by the studio: fn() starting the point cloud + Object poses
         self.on_done = None        # fn(results): reload the project's objects (meshes + seeded poses)
 
@@ -129,7 +138,7 @@ class ObjectScan(ArmMover):
         self.progress.append(text)
         del self.progress[:-60]
 
-    def start(self, objects: list[dict], out_dir: str) -> dict:
+    def start(self, objects: list[dict], out_dir: str, manual: bool = False) -> dict:
         if self.state == "running":
             return {"ok": False, "message": "A scan is running."}
         if self.halted:
@@ -139,9 +148,21 @@ class ObjectScan(ArmMover):
         self._stop.clear()
         self.objects, self.results = list(objects), {}
         self.state, self.phase, self.progress = "running", "starting", []
-        self._thread = threading.Thread(target=self._run, args=(out_dir,), daemon=True, name="object-scan")
+        self.manual, self.captures, self._commands = bool(manual), 0, queue.Queue()
+        self._thread = threading.Thread(target=self._run_manual if manual else self._run, args=(out_dir,),
+                                        daemon=True, name="object-scan")
         self._thread.start()
-        return {"ok": True, "message": f"Scanning {', '.join(o['name'] for o in objects)}."}
+        how = "move the arms to the views, Capture each, then Finish" if manual else "the arms move on their own"
+        return {"ok": True, "message": f"Scanning {', '.join(o['name'] for o in objects)}: {how}."}
+
+    def command(self, cmd: str) -> dict:
+        """Manual scan: ``capture`` (one view of every camera) or ``finish`` (fuse the meshes)."""
+        if self.state != "running" or not self.manual:
+            return {"ok": False, "message": "No manual scan is running."}
+        if cmd == "finish" and not self.captures:
+            return {"ok": False, "message": "Capture some views first."}
+        self._commands.put(cmd)
+        return {"ok": True, "message": "Capturing (once the arms are still)…" if cmd == "capture" else "Fusing…"}
 
     def stop(self, reason: str = "stopped") -> bool:
         if self.state != "running":
@@ -150,24 +171,75 @@ class ObjectScan(ArmMover):
         self._log(f"Stop requested ({reason}).")
         return True
 
+    def _start_node(self, out_dir: str) -> None:
+        self.phase = "starting the point cloud and the pose tracking"
+        if self.prepare:
+            self.prepare()
+        t_end = time.time() + float(self.cfg["start_timeout_s"])
+        while self.link.scan_status() is None:
+            self._check()
+            if time.time() > t_end:
+                raise RuntimeError("the pose tracking node does not report (Object poses component?)")
+            time.sleep(0.5)
+        self._token = uuid.uuid4().hex[:8]
+        cameras = self.static + list(self.arms)
+        self.link.send_scan({"cmd": "start", "objects": self.objects, "cameras": cameras,
+                             "out_dir": out_dir, "token": self._token})
+        self._wait(lambda s: s.get("state") == "collecting", 10.0, "the node to start the scan")
+        time.sleep(1.5)    # the first RGB-D of every camera (FFS computes it once subscribed)
+
+    def _finish_node(self) -> None:
+        self.phase = "segmenting and fusing (takes a while)"
+        self.link.send_scan({"cmd": "finish"})
+        scan = self._wait(lambda s: s.get("state") in ("done", "failed"), float(self.cfg["fuse_timeout_s"]),
+                          "the meshes")
+        self.results = scan.get("results") or {}
+        for name, r in self.results.items():
+            cams = ", ".join(f"{c} {n}" for c, n in (r.get("views_by_camera") or {}).items())
+            self._log(f"{name}: " + (r["error"] if "error" in r else
+                                     f"{r['views']} views, {' x '.join(f'{100 * e:.1f}' for e in r['extent_m'])} cm")
+                      + (f" ({cams})" if cams else ""))
+        if self.on_done:
+            self.on_done(self.results)
+        ok = sum("mesh" in r for r in self.results.values())
+        self.state, self.phase = ("done" if ok else "failed"), "done"
+        self._log(f"Done: {ok}/{len(self.results)} objects scanned; tracking starts at their scan poses.")
+
+    def _run_manual(self, out_dir: str) -> None:
+        try:
+            self._start_node(out_dir)
+            self.phase = "move the arms to a view, then Capture view (Finish when done)"
+            self._log("Bring the wrist cameras to the views that matter (teleop or by hand): all sides, close up, "
+                      "each object in several views. Capture view at each; Finish builds the meshes.")
+            while True:
+                try:
+                    cmd = self._commands.get(timeout=0.2)
+                except queue.Empty:
+                    self._check()
+                    continue
+                if cmd == "finish":
+                    break
+                self.phase = f"capturing view {self.captures + 1}"
+                self._capture(self.captures + 1, f"view {self.captures + 1}")
+                self.captures += 1
+                self.phase = f"{self.captures} views: move to the next, Capture view (Finish when done)"
+            self._finish_node()
+        except Aborted:
+            self.state, self.phase = "stopped", "stopped"
+            self.link.send_scan({"cmd": "cancel"})
+            self._log("Stopped.")
+        except Exception as e:
+            log.exception("object scan failed")
+            self.state, self.phase = "failed", "failed"
+            self.link.send_scan({"cmd": "cancel"})
+            self._log(f"Failed: {e}")
+        finally:
+            self.notify(f"Object scan {self.state}.", "success" if self.state == "done" else "warn")
+
     def _run(self, out_dir: str) -> None:
         starts: dict[str, np.ndarray] = {}
         try:
-            self.phase = "starting the point cloud and the pose tracking"
-            if self.prepare:
-                self.prepare()
-            t_end = time.time() + float(self.cfg["start_timeout_s"])
-            while self.link.scan_status() is None:
-                self._check()
-                if time.time() > t_end:
-                    raise RuntimeError("the pose tracking node does not report (Object poses component?)")
-                time.sleep(0.5)
-            self._token = uuid.uuid4().hex[:8]
-            cameras = self.static + list(self.arms)
-            self.link.send_scan({"cmd": "start", "objects": self.objects, "cameras": cameras,
-                                 "out_dir": out_dir, "token": self._token})
-            self._wait(lambda s: s.get("state") == "collecting", 10.0, "the node to start the scan")
-            time.sleep(1.5)    # the first RGB-D of every camera (FFS computes it once subscribed)
+            self._start_node(out_dir)
 
             self.phase = "locating the objects"
             self.link.send_scan({"cmd": "locate"})
@@ -204,19 +276,7 @@ class ObjectScan(ArmMover):
                 self._move(robot, G0)
                 starts.pop(robot, None)
 
-            self.phase = "segmenting and fusing (takes a while)"
-            self.link.send_scan({"cmd": "finish"})
-            scan = self._wait(lambda s: s.get("state") in ("done", "failed"), float(self.cfg["fuse_timeout_s"]),
-                              "the meshes")
-            self.results = scan.get("results") or {}
-            for name, r in self.results.items():
-                self._log(f"{name}: " + (r["error"] if "error" in r else
-                                         f"{r['views']} views, {' x '.join(f'{100 * e:.1f}' for e in r['extent_m'])} cm"))
-            if self.on_done:
-                self.on_done(self.results)
-            ok = sum("mesh" in r for r in self.results.values())
-            self.state, self.phase = ("done" if ok else "failed"), "done"
-            self._log(f"Done: {ok}/{len(self.results)} objects scanned; tracking starts at their scan poses.")
+            self._finish_node()
         except Aborted:
             self.state, self.phase = "stopped", "stopped"
             self.link.send_scan({"cmd": "cancel"})
@@ -240,4 +300,5 @@ class ObjectScan(ArmMover):
     def snapshot(self) -> dict:
         node = self._node_scan() if self.state == "running" else None
         return {"state": self.state, "phase": self.phase, "progress": self.progress[-14:],
+                "manual": self.manual, "captures": self.captures,
                 "node": node, "results": self.results, "halted": self.halted}
