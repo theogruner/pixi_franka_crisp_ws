@@ -29,6 +29,7 @@ DEFAULTS: dict[str, Any] = {
         "trigger_service": "/data_collector/record_data_trigger",
         "component": "data_collection",
         "node": "/data_collector",        # its extra_topics parameter: what the modalities add
+        "record_service": "/franka_studio/record_trigger",   # Record / Stop as a Trigger (teleop A)
     },
     "pointcloud_topics": {"status": "/ffs/status", "extrinsics": "/ffs/extrinsics", "align": "/ffs/align"},
     "pose_tracking_topics": {"status": "/pose_tracking/status", "objects": "/pose_tracking/objects"},
@@ -38,6 +39,7 @@ DEFAULTS: dict[str, Any] = {
         "arms": {"zed_right_arm": "franka_right", "zed_left_arm": "franka_left"},   # wrist camera -> arm
         "static": ["zed_middle"],
         "topic_prefix": "/zed_multi",
+        "cloud_topic": "/ffs/{camera}/points",   # per-camera clouds to fine-tune with ("": board only)
         "views": 8,                  # per arm, after 3 probes
         "speed": 0.05,               # m/s of the grasp point
         "rotation_speed_deg": 15.0,  # deg/s

@@ -151,6 +151,7 @@ class SceneViewer:
         self.on_save_camera = None     # set by the studio: fn(name, position, wxyz) -> str
         self.on_preview_camera = None  # fn(name, position, wxyz): unsaved pose (moves the merged cloud)
         self.on_align_camera = None    # fn(name, position, wxyz) -> {ok, message, position, wxyz}
+        self.hidden_poses = None       # fn() -> names of poses not to draw (e.g. objects not tracked)
         self._placed: dict[str, tuple] = {}   # name -> (position, wxyz) for unposed cameras
         self._unsaved: set[str] = set()       # placed (gizmo / alignment) but not saved yet
         self._placeable: list[str] = []
@@ -282,6 +283,7 @@ class SceneViewer:
 
     def _render_poses(self, poses: dict, env: SceneEnv) -> None:
         cfgs = env.scene.pose_cfg
+        hidden = self.hidden_poses() if self.hidden_poses else set()
         for i, (name, pose) in enumerate(poses.items()):
             cfg = cfgs.get(name, {})
             color = tuple(cfg.get("color", POSE_COLORS[i % len(POSE_COLORS)]))
@@ -289,7 +291,7 @@ class SceneViewer:
                 f"/poses/{name}", axes_length=float(cfg.get("axes_length", 0.06)),
                 axes_radius=float(cfg.get("axes_radius", 0.003)),
                 origin_radius=0.008, origin_color=color))
-            h.position, h.wxyz, h.visible = pose.position, pose.wxyz, self.show_frames.value
+            h.position, h.wxyz, h.visible = pose.position, pose.wxyz, self.show_frames.value and name not in hidden
             if cfg.get("label", True):
                 self._node(f"/poses/{name}/label", lambda name=name: self.server.scene.add_label(
                     f"/poses/{name}/label", name, font_screen_scale=0.7))

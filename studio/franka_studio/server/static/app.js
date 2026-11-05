@@ -373,7 +373,15 @@ function renderObjects(s) {
   }
   const missing = specs.filter((o) => !o.mesh).length;
   $("#objects-sub").textContent = specs.length ? `${specs.length} objects${missing ? ` · ${missing} without mesh` : ""}` : "";
+  const manual = running && scan.manual;
+  const capturing = manual && String(scan.phase || "").startsWith("capturing");
   $("#obj-scan").hidden = running;
+  $("#obj-auto-label").hidden = running;
+  $("#obj-capture").hidden = !manual;
+  $("#obj-finish").hidden = !manual;
+  $("#obj-capture").disabled = capturing || !String(scan.phase || "").includes("Capture view");
+  $("#obj-finish").disabled = capturing || !scan.captures;
+  $("#obj-capture-text").textContent = capturing ? "Capturing…" : `Capture view ${(scan.captures || 0) + 1}`;
   $("#obj-stop").hidden = !running;
   $("#obj-scan").disabled = !specs.length || s.halted || s.calibration?.state === "running";
   $("#obj-scan").title = s.halted ? "Resume first" : !specs.length ? "Add objects first"
@@ -622,6 +630,8 @@ function renderCalibration(s) {
   const runningCal = c.state === "running";
   $("#calib-start").disabled = runningCal || s.halted;
   $("#calib-start").title = s.halted ? "Resume first" : runningCal ? "Running — Stop aborts it" : "Probe and drive to the views with the checked arms, one after the other";
+  $("#calib-add").disabled = !c.can_add || runningCal || s.halted;
+  $("#calib-add").title = c.can_add ? "Board moved: capture it at its new place with the checked arms and solve every placement together" : "Calibrate first";
   const prog = $("#calib-progress");
   prog.hidden = !(c.progress || []).length;
   if (!prog.hidden && changed("calib-prog", [c.state, c.phase, c.progress])) {
@@ -630,7 +640,7 @@ function renderCalibration(s) {
   }
   const res = $("#calib-result");
   res.hidden = !c.result;
-  $("#calib-save-row").hidden = !c.result;
+  $("#calib-save-row").hidden = !c.result || (c.result.weak || []).length > 0;
   if (c.result && changed("calib-res", c.result)) {
     const r = c.result;
     const rows = Object.entries(r.rms).map(([cam, v]) => {
@@ -640,7 +650,16 @@ function renderCalibration(s) {
     const robots = Object.entries(r.values?.robots || {}).map(([robot, vals]) =>
       `<span>${esc(robot)}</span><span class="muted">${esc(Object.keys(vals).some((k) => k.startsWith("cam_")) ? "camera mount" : "")}${vals.xyz ? (Object.keys(vals).length > 2 ? " + base" : "base") : ""}</span>`).join("");
     const statics = Object.keys(r.values?.static || {}).map((cam) => `<span>${esc(cam)}</span><span class="muted">pose</span>`).join("");
-    res.innerHTML = `<span class="head">Reprojection error</span>${rows}<span class="head">Changes when applied</span>${robots}${statics}`;
+    const cl = r.cloud;
+    const clouds = !cl ? "" : cl.used
+      ? Object.entries(cl.mm).map(([cam, [a, b]]) => `<span>${esc(cam)}</span><span class="${b != null && b < 3 ? "good" : "bad"}">${b} mm <span class="muted">(was ${a})</span></span>`).join("")
+      : `<span class="muted wide">${esc(cl.message)}</span>`;
+    const weak = (r.weak || []).length
+      ? `<span class="head bad">Weak — not to be saved: add a placement or calibrate again</span>${r.weak.map((w) => `<span class="bad wide">${esc(w)}</span>`).join("")}`
+      : "";
+    res.innerHTML = `${weak}<span class="head">Reprojection error · ${r.placements || 1} board placement${(r.placements || 1) > 1 ? "s" : ""}</span>${rows}`
+      + `<span class="head">Distance to the static camera's cloud</span>${clouds}`
+      + `<span class="head">Changes when applied</span>${robots}${statics}`;
   }
   const saved = c.saved || [];
   if (changed("calib-saved", saved.map((x) => x.name))) {
@@ -672,7 +691,7 @@ function renderViewer(s) {
 // ---------------------------------------------------------------- wiring
 
 function rememberSelection() {
-  post("collection/select", { dataset: $("#dataset").value.trim(), task: $("#task").value.trim(), instruction: $("#instruction").value.trim() });
+  post("collection/select", { dataset: $("#dataset").value.trim(), task: $("#task").value.trim(), instruction: $("#instruction").value.trim(), operator: $("#operator").value.trim() });
 }
 
 function wire() {
@@ -720,7 +739,10 @@ function wire() {
     const rescan = e.target.closest("[data-rescan]");
     if (rescan) {
       const name = rescan.closest(".obj-row").dataset.name;
-      if (confirm(`Scan ${name} again? Its mesh is replaced.\n\nBoth arms move on their own around it, one after the other (slowly, within 30 cm of where they stand now).\n\nKeep the area clear and the Stop button in reach.`)) post("objects/scan", { names: [name] });
+      const auto = $("#obj-auto").checked;
+      if (confirm(`Scan ${name} again? Its mesh is replaced.\n\n` + (auto
+        ? "Both arms move on their own around it, one after the other (slowly, within 30 cm of where they stand now).\n\nKeep the area clear and the Stop button in reach."
+        : "Move the wrist cameras to views of it from all sides, Capture view at each, then Finish."))) post("objects/scan", { names: [name], auto });
       return;
     }
     const btn = e.target.closest("[data-remove]");
@@ -737,15 +759,24 @@ function wire() {
     const specs = ui.status?.pose_tracking?.specs || [];
     const names = specs.filter((o) => !o.mesh).map((o) => o.prompt).join(", ");
     if (!names) { post("objects/scan"); return; }   // all meshed: only starts the tracking
-    if (!confirm(`Scan ${names}?\n\nBoth arms move on their own around the objects, one after the other (slowly, within 30 cm of where they stand now). Point the wrist cameras roughly at the objects first.\n\nKeep the area clear and the Stop button in reach.`)) return;
-    post("objects/scan");
+    const auto = $("#obj-auto").checked;
+    if (auto && !confirm(`Scan ${names}?\n\nBoth arms move on their own around the objects, one after the other (slowly, within 30 cm of where they stand now). Point the wrist cameras roughly at the objects first.\n\nKeep the area clear and the Stop button in reach.`)) return;
+    post("objects/scan", { auto });
   };
+  $("#obj-capture").onclick = () => post("objects/capture");
+  $("#obj-finish").onclick = () => post("objects/finish");
   $("#obj-stop").onclick = () => post("objects/stop");
   $("#calib-start").onclick = () => {
     const arms = [...$("#calib-arms").querySelectorAll("input:checked")].map((i) => i.value);
     if (!arms.length) { toast("Check at least one arm.", "warn", true); return; }
     if (!confirm(`The ${arms.join(" and ")} will move on its own around the board (slowly, within 20 cm of its start pose).\n\nKeep the area clear and the Stop button in reach.`)) return;
     post("calibration/start", { arms });
+  };
+  $("#calib-add").onclick = () => {
+    const arms = [...$("#calib-arms").querySelectorAll("input:checked")].map((i) => i.value);
+    if (!arms.length) { toast("Check at least one arm.", "warn", true); return; }
+    if (!confirm(`Board moved? The ${arms.join(" and ")} will move on its own around the board at its new place (slowly, within 20 cm of its start pose); every placement is then solved together.\n\nKeep the area clear and the Stop button in reach.`)) return;
+    post("calibration/add", { arms });
   };
   $("#calib-save").onclick = async () => {
     const r = await post("calibration/save", { name: $("#calib-name").value.trim() });
@@ -764,7 +795,7 @@ function wire() {
   };
   $("#prompt").onkeydown = (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) $("#run-btn").click(); };
 
-  for (const id of ["#dataset", "#task", "#instruction"]) $(id).onchange = rememberSelection;
+  for (const id of ["#dataset", "#task", "#instruction", "#operator"]) $(id).onchange = rememberSelection;
   $("#task").addEventListener("change", () => {
     const t = $("#task").value.trim();
     const instr = ui.status?.tasks?.[t];

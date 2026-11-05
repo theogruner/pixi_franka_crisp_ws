@@ -372,7 +372,7 @@ def test_camera_rig_modes_and_rgb_only_aggregator_params(tmp_path):
     assert camera_rig.zed_mode({"depth": False, "stereo": True, "zed_overrides": "~/x"}) == "~/x/zed_stereo.yaml"
     assert camera_rig.zed_mode({"depth": True, "stereo": True, "zed_overrides": "~/x/"}) == "~/x/zed_stereo_depth.yaml"
     node = camera_rig.pointcloud_config(cfg, ["a", "b"])
-    assert node["cameras"] == ["a", "b"] and "extrinsics" in node
+    assert node["cameras"] == ["a", "b"] and "extrinsics" in node and "roi" in node
     pc = {"host": "pc", "engine": "jetson.engine", "rate": 5.0, "pc": {"engine": "pc.engine", "rate": 20.0}}
     assert camera_rig.pointcloud_config({"pointcloud": pc}, ["a"])["engine"] == "pc.engine"
     assert camera_rig.pointcloud_config({"pointcloud": pc}, ["a"])["rate"] == 20.0
@@ -481,3 +481,27 @@ def test_pose_array_extractor_fixed_size():
     out = ext.extract(PoseArray(poses=[p]))   # second object missing -> zeros
     assert out.shape == ext.shape == (18,) and out.dtype == np.float32
     assert np.allclose(out[:9], [1, 2, 3, 1, 0, 0, 0, 1, 0]) and not out[9:].any()
+
+
+def test_untracked_objects_are_hidden():
+    import json
+    import time
+
+    from franka_studio.pose_tracking import PoseTrackingLink
+
+    class Ros:
+        def subscribe(self, *a, **k):
+            pass
+
+        def publisher(self, *a, **k):
+            return type("P", (), {"publish": lambda self, m: None})()
+
+    link = PoseTrackingLink(Ros())
+    link.set_objects([{"name": "mug", "prompt": "mug", "mesh": None, "scale": 1.0},
+                      {"name": "box", "prompt": "box", "mesh": None, "scale": 1.0}])
+    assert link.untracked_poses() == {"object/mug", "object/box"}   # node not live
+    msg = type("M", (), {"data": json.dumps({"objects": {"mug": {"status": "tracking"}, "box": {"status": "lost"}}})})()
+    link._on_status(msg)
+    assert link.untracked_poses() == {"object/box"}
+    link._status_t = time.time() - 60
+    assert link.untracked_poses() == {"object/mug", "object/box"}

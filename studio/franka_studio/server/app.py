@@ -53,7 +53,7 @@ def build_app(studio: Studio) -> web.Application:
         "policy/run": (studio.run_policy, ["prompt"]),
         "policy/stop": (studio.stop_policy, []),
         "home": (studio.home, []),
-        "collection/select": (studio.select_dataset, ["dataset", "task", "instruction"]),
+        "collection/select": (studio.select_dataset, ["dataset", "task", "instruction", "operator"]),
         "collection/start": (studio.start_recording, ["dataset", "task", "instruction", "operator"]),
         "collection/stop": (studio.stop_recording, []),
         "collection/discard": (studio.discard_last, []),
@@ -67,11 +67,14 @@ def build_app(studio: Studio) -> web.Application:
         "resume": (studio.resume, []),
         "calibration/watch": (studio.calibration_watch, ["on"]),
         "calibration/start": (studio.calibration_start, ["arms"]),
+        "calibration/add": (studio.calibration_add, ["arms"]),           # board moved: one more placement
         "calibration/stop": (studio.halt, []),          # stopping a calibration is a Stop
         "calibration/save": (studio.calibration_save, ["name"]),
         "calibration/apply": (studio.calibration_apply, ["name"]),
         "objects/set": (studio.objects_set, ["objects"]),
-        "objects/scan": (studio.objects_scan, ["names"]),
+        "objects/scan": (studio.objects_scan, ["names", "auto"]),
+        "objects/capture": (lambda: studio.objects_scan_command("capture"), []),   # manual scan
+        "objects/finish": (lambda: studio.objects_scan_command("finish"), []),
         "objects/stop": (studio.halt, []),               # stopping a scan is a Stop, as for calibration
     }
 

@@ -20,6 +20,8 @@ from typing import Callable
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 
+from franka_studio.ros.runtime import retire_subscription
+
 log = logging.getLogger(__name__)
 
 BEST_EFFORT_QOS = QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT, durability=DurabilityPolicy.VOLATILE,
@@ -50,7 +52,7 @@ class AdaptiveSubscription:
 
     def _create(self) -> None:
         if self._sub is not None:
-            self.node.destroy_subscription(self._sub)
+            retire_subscription(self.node, self._sub)
         self._sub = self.node.create_subscription(
             self.msg_cls, self.topic, self._on_msg, RELIABLE_QOS if self.reliable else BEST_EFFORT_QOS,
             callback_group=self.group)

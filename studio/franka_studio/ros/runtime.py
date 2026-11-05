@@ -3,6 +3,7 @@
 Every scene env gets its own node so switching policies can drop all of its subscriptions and
 publishers at once. Nodes are added to the shared executor; a removed node is destroyed after a
 grace period, because callbacks the executor already took may still be running on it.
+Single subscriptions are retired the same way (``retire_subscription``).
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ import time
 import rclpy
 from rcl_interfaces.msg import Parameter, ParameterType, ParameterValue
 from rcl_interfaces.srv import SetParameters
+from rclpy.callback_groups import CallbackGroup, ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
@@ -21,6 +23,43 @@ from std_srvs.srv import Trigger
 RETIRE_GRACE_S = 1.0
 LATCHED_QOS = QoSProfile(reliability=ReliabilityPolicy.RELIABLE, durability=DurabilityPolicy.TRANSIENT_LOCAL,
                          history=HistoryPolicy.KEEP_LAST, depth=1)
+
+
+class _Retired(CallbackGroup):
+    """Entities in it are left out of the executor's wait set."""
+
+    def can_execute(self, entity) -> bool:
+        return False
+
+    def beginning_execution(self, entity) -> bool:
+        return False
+
+    def ending_execution(self, entity) -> None:
+        pass
+
+
+_RETIRED = _Retired()
+
+
+def retire_subscription(node: Node, sub: object) -> None:
+    """Destroys ``sub`` safely while the executor spins. Destroying it at once races the executor
+    thread (Humble): that thread lists the node's entities, then enters each; an event handler
+    destroyed in between kills the executor ("__enter__(): incompatible function arguments ...
+    QoSEvent") and then the process (segfault). So it is first left out of the wait set, and
+    destroyed once the executor has rebuilt it."""
+    for entity in [sub, *getattr(sub, "event_handlers", [])]:
+        entity.callback_group = _RETIRED
+    if node.executor is not None:
+        node.executor.wake()
+
+    def _destroy() -> None:
+        time.sleep(RETIRE_GRACE_S)
+        try:
+            node.destroy_subscription(sub)
+        except Exception:
+            pass
+
+    threading.Thread(target=_destroy, daemon=True).start()
 
 
 class RosRuntime:
@@ -38,11 +77,18 @@ class RosRuntime:
         self._param_clients: dict[str, object] = {}
 
     def _spin(self) -> None:
-        try:
-            self.executor.spin()
-        except Exception as e:  # shutdown races are harmless
-            if rclpy.ok():
-                self.node.get_logger().error(f"executor stopped: {e}")
+        # One failed wait-set rebuild (an entity destroyed mid-way) must not stop all of the
+        # studio's ROS: it spins on; only shutdown ends it.
+        while rclpy.ok():
+            try:
+                self.executor.spin()
+            except Exception as e:  # shutdown races are harmless
+                if not rclpy.ok():
+                    return
+                self.node.get_logger().error(f"executor failed, spinning on: {e}")
+                time.sleep(0.1)
+            else:
+                return
 
     def add_node(self, node: Node) -> None:
         self.executor.add_node(node)
@@ -91,6 +137,20 @@ class RosRuntime:
             return False, f"{service} did not answer within {timeout_s:.0f} s."
         result = future.result()
         return bool(result.success), str(result.message)
+
+    def serve_trigger(self, service: str, handler) -> object:
+        """Offers a ``std_srvs/Trigger`` service answered by ``handler() -> (success, message)``.
+
+        Reentrant, so the handler may itself call services (they are answered on other threads).
+        """
+        def _cb(_request, response):
+            try:
+                response.success, response.message = handler()
+            except Exception as e:
+                response.success, response.message = False, f"{type(e).__name__}: {e}"
+            return response
+
+        return self.node.create_service(Trigger, service, _cb, callback_group=ReentrantCallbackGroup())
 
     def _wait(self, future: object, timeout_s: float) -> bool:
         deadline = time.time() + timeout_s

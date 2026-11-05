@@ -82,6 +82,8 @@ class Studio:
         self.cluster = Cluster()
         dc = cfg["data_collector"]
         self.collection = DataCollection(lambda: self.ros.call_trigger(dc["trigger_service"]))
+        if dc.get("record_service"):
+            self.ros.serve_trigger(dc["record_service"], self.toggle_recording)
         self.viewer = None
         if with_viewer:
             from franka_studio.viz.scene_viewer import SceneViewer
@@ -91,6 +93,7 @@ class Studio:
             self.viewer.on_save_camera = self.save_camera_pose
             self.viewer.on_preview_camera = self.pointcloud.preview
             self.viewer.on_align_camera = self.align_camera
+            self.viewer.hidden_poses = self.pose_tracking.untracked_poses   # not at the origin while searching
 
         self._lock = threading.RLock()
         self._events: collections.deque = collections.deque(maxlen=50)
@@ -457,7 +460,7 @@ class Studio:
     def _save_static_pose(self, name: str, position: list, wxyz: list) -> str:
         return self.save_camera_pose(name, [float(v) for v in position], [float(v) for v in wxyz])
 
-    def calibration_start(self, arms: object) -> dict:
+    def calibration_start(self, arms: object, add: object = False) -> dict:
         if self.collection.recording:
             return self._result(False, "Stop the recording first.")
         if self.object_scan.state == "running":
@@ -467,7 +470,11 @@ class Studio:
         if self.active_env is not None:
             self.active_env.stop_home()
         arms = [a for a in (arms if isinstance(arms, list) else str(arms or "").split(",")) if a]
-        return self._result(*_ok_msg(self.calibration.start(arms or None)))
+        return self._result(*_ok_msg(self.calibration.start(arms or None, add in (True, "true", "1", 1))))
+
+    def calibration_add(self, arms: object) -> dict:
+        """The board was moved: capture it again and solve with the earlier placements."""
+        return self.calibration_start(arms, add=True)
 
     def calibration_watch(self, on: object) -> dict:
         return self._result(*_ok_msg(self.calibration.watch(on)))
@@ -520,9 +527,10 @@ class Studio:
             if self.processes.get(name) and not self.processes.is_up(name):
                 self.processes.start(name)
 
-    def objects_scan(self, names: object = "") -> dict:
+    def objects_scan(self, names: object = "", auto: object = False) -> dict:
         """Scans the objects without a mesh, or ``names`` (scan again). Objects with a mesh are
-        located by the pose tracking itself: with nothing to scan, it only starts tracking."""
+        located by the pose tracking itself: with nothing to scan, it only starts tracking.
+        Manual unless ``auto``: the user moves the arms and captures (``objects_scan_command``)."""
         if not self.project:
             return self._result(False, "No project selected.")
         if self.collection.recording:
@@ -544,7 +552,12 @@ class Studio:
         if self.active_env is not None:
             self.active_env.stop_home()
         objects = [{"name": s["name"], "prompt": s["prompt"]} for s in specs]
-        return self._result(*_ok_msg(self.object_scan.start(objects, str(self.project.root / "objects"))))
+        return self._result(*_ok_msg(self.object_scan.start(objects, str(self.project.root / "objects"),
+                                                            manual=not auto)))
+
+    def objects_scan_command(self, cmd: str) -> dict:
+        """Manual scan: ``capture`` a view (every camera) or ``finish`` (build the meshes)."""
+        return self._result(*_ok_msg(self.object_scan.command(cmd)))
 
     # ---- data collection -----------------------------------------------------------------------------
 
@@ -559,10 +572,23 @@ class Studio:
             self._datasets_cache = (time.time(), cached)
         return cached
 
-    def select_dataset(self, dataset: str, task: str, instruction: str = "") -> dict:
+    def select_dataset(self, dataset: str, task: str, instruction: str = "", operator: str = "") -> dict:
         if self.project:
-            self.state.set_project(self.project.id, dataset=dataset, task=task, instruction=instruction)
+            self.state.set_project(self.project.id, dataset=dataset, task=task, instruction=instruction,
+                                   operator=operator)
         return {"ok": True}
+
+    def toggle_recording(self) -> tuple[bool, str]:
+        """Record / Stop from outside the page (the teleop's A): the dataset / task selected there."""
+        if self.collection.recording:
+            r = self.stop_recording()
+        elif not self.project:
+            r = self._result(False, "No project selected.")
+        else:
+            sel = self.state.project(self.project.id)
+            r = self.start_recording(sel.get("dataset", ""), sel.get("task", ""), sel.get("instruction", ""),
+                                     sel.get("operator", ""))
+        return r["ok"], r["message"]
 
     def start_recording(self, dataset: str, task: str, instruction: str = "", operator: str = "") -> dict:
         if not self.project:
