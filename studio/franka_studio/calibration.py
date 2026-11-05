@@ -9,8 +9,14 @@ camera sees the board:
    gives a first estimate of the camera on the flange and of the board in the world,
 2. views: ``views`` camera poses on a cap above the board (same distance as at the start,
    tilted and rolled), looking at its centre, turned into grasp-point targets and driven to,
-3. every still pose: one capture of all cameras (static cameras on every one), then back to the
-   start pose. The final solve over all captures is the CLI's (scripts/python/board_calibration.py).
+3. every still pose: one capture of all cameras (static cameras on every one) with their point
+   clouds (``/ffs/<camera>/points``, if the point cloud node runs), then back to the start pose.
+
+The final solve over all captures is the CLI's (scripts/python/board_calibration.py), fine-tuned
+with the clouds (cloud_refine.py). **Add placement** runs again with the board moved elsewhere and
+solves every placement together: the more of the workspace the board covered, the less a small
+rotation error grows away from it. A weak run (too few / too similar wrist views, a badly pinned
+down pose: ``Problem.weak``) cannot be saved.
 
 Motions are slow Cartesian targets through the safety node's ``target_pose`` service (the IK
 follows), limited to ``max_offset`` / ``max_rotation_deg`` around the start pose and kept
@@ -26,7 +32,9 @@ from __future__ import annotations
 import datetime
 import json
 import logging
+import os
 import re
+import subprocess
 import sys
 import threading
 import time
@@ -58,7 +66,7 @@ class AutoCalibration(ArmMover):
     def __init__(self, runtime, cfg: dict, save_static, notify) -> None:
         """``save_static(name, position, wxyz)`` stores a static camera pose in the project."""
         from rclpy.qos import qos_profile_sensor_data
-        from sensor_msgs.msg import CameraInfo, CompressedImage
+        from sensor_msgs.msg import CameraInfo, CompressedImage, PointCloud2
 
         self.cfg = cfg
         self.runtime = runtime
@@ -76,7 +84,8 @@ class AutoCalibration(ArmMover):
         self._info: dict[tuple, object] = {}
         self._img_subs: list = []
         self._qos_images = qos_profile_sensor_data
-        self._msgs = (CompressedImage, CameraInfo)
+        self._msgs = (CompressedImage, CameraInfo, PointCloud2)
+        self._cloud_msgs: dict[str, object] = {}
         for cam in self.cameras:     # camera_info is small: always subscribed
             for side in ("rgb", "right"):
                 self.node.create_subscription(
@@ -91,6 +100,10 @@ class AutoCalibration(ArmMover):
         self.progress: list[str] = []
         self.result: dict | None = None
         self._data: dict | None = None
+        self._clouds: dict = {}                  # (sample index, camera) -> camera-frame points
+        self._placement = 0
+        self._wanted: set[str] = set()           # wrist cameras calibrated over all placements
+        self._rebase: dict[str, np.ndarray] = {}  # flange (current TF) -> the first placement's robot bases
         self._thread: threading.Thread | None = None
         threading.Thread(target=self._watch_loop, daemon=True, name="calib-watch").start()
 
@@ -103,17 +116,24 @@ class AutoCalibration(ArmMover):
     def _set_images(self, on: bool) -> None:
         """Compressed images only while needed: the Jetson encodes them only while subscribed."""
         if on and not self._img_subs:
-            CompressedImage = self._msgs[0]
+            CompressedImage, _, PointCloud2 = self._msgs
             for cam in self.cameras:
                 self._img_subs.append(self.node.create_subscription(
                     CompressedImage, f"{self.prefix}/{cam}/rgb/color/rect/image/compressed",
                     lambda m, c=cam: self._store(self._images, c, m), self._qos_images))
+                if self.cfg.get("cloud_topic"):
+                    self._img_subs.append(self.node.create_subscription(
+                        PointCloud2, self.cfg["cloud_topic"].format(camera=cam),
+                        lambda m, c=cam: self._store(self._cloud_msgs, c, m), self._qos_images))
         elif not on and self._img_subs:
+            from franka_studio.ros.runtime import retire_subscription
+
             for sub in self._img_subs:
-                self.node.destroy_subscription(sub)
+                retire_subscription(self.node, sub)
             self._img_subs = []
             with self._lock:
                 self._images.clear()
+                self._cloud_msgs.clear()
             self.visibility = {c: None for c in self.cameras}
 
     def watch(self, on: object) -> dict:
@@ -206,20 +226,43 @@ class AutoCalibration(ArmMover):
                 if moved_mm > 1000 * bc.STILL_M or moved_deg > bc.STILL_DEG:
                     dropped[cam] = f"arm still moving ({moved_mm:.1f} mm, {moved_deg:.2f} deg in 0.3 s)"
                     continue
-                entry["flange"] = F.tolist()
+                entry["flange"] = (self._rebase.get(cam, np.eye(4)) @ F).tolist()
             sample["cams"][cam] = entry
         sample["dropped"] = dropped
+        sample["clouds"] = self._grab_clouds(list(sample["cams"]), t0)
         return sample
+
+    def _grab_clouds(self, cams: list[str], t0: float, timeout: float = 2.0) -> dict:
+        """The first point cloud of each camera from an image after ``t0`` (camera frame, thinned);
+        none without the point cloud node."""
+        with self._lock:
+            if not self._cloud_msgs:
+                return {}
+        out: dict = {}
+        deadline = time.time() + timeout
+        while time.time() < deadline and len(out) < len(cams):
+            self._check()
+            with self._lock:
+                msgs = {c: self._cloud_msgs.get(c) for c in cams if c not in out}
+            for cam, msg in msgs.items():
+                if msg is not None and bc.Capture._stamp(msg) >= t0:
+                    out[cam] = bc.cloud_refine.thin(cloud_xyz(msg))
+            time.sleep(0.02)
+        return out
 
     def _add_sample(self, label: str) -> dict:
         self._settle()
         sample = self._capture()
         dropped = sample.pop("dropped", {})
+        clouds = sample.pop("clouds", {})
+        sample["placement"] = self._placement
         if sample["cams"]:
+            k = len(self._data["samples"])
             self._data["samples"].append(sample)
+            self._clouds.update({(k, cam): xyz for cam, xyz in clouds.items() if cam in sample["cams"]})
             self._save_samples()
         seen = ", ".join(f"{c} {len(e['left'])}" for c, e in sample["cams"].items()) or "nothing"
-        self._log(f"{label}: board seen by {seen}")
+        self._log(f"{label}: board seen by {seen}" + (f"; {len(clouds)} clouds" if clouds else ""))
         for cam, why in dropped.items():
             if cam in self.arms:
                 self._log(f"  {cam} not used: {why}")
@@ -228,10 +271,11 @@ class AutoCalibration(ArmMover):
     # ---- planning ----------------------------------------------------------------------------------------------
 
     def _estimate(self, cam: str) -> tuple[np.ndarray, np.ndarray]:
-        """(link8 <- camera, world <- board) from this arm's captures so far (small probe spread allowed)."""
+        """(link8 <- camera, world <- board) from this arm's captures of this placement so far (small
+        probe spread allowed); the board in the current TF's world, as the motions are."""
         robot = self.arms[cam]
         data = dict(self._data, samples=[{**s, "cams": {c: e for c, e in s["cams"].items() if c == cam}}
-                                         for s in self._data["samples"]])
+                                         for s in self._data["samples"] if s.get("placement", 0) == self._placement])
         data["samples"] = [s for s in data["samples"] if s["cams"]]
         problem = bc.Problem(data, self.board, reference_robot=robot, min_samples=3, min_spread_deg=6.0)
         if cam not in problem.free_mount:
@@ -239,7 +283,7 @@ class AutoCalibration(ArmMover):
         result, rms = problem.solve()
         X = result["x"][f"C:{cam}"] @ problem.frames[cam]["optical"]
         self._log(f"{cam}: first estimate, reprojection {rms[cam]:.2f} px")
-        return X, result["x"]["B"]
+        return X, np.linalg.inv(self._rebase.get(cam, np.eye(4))) @ result["x"][f"B:{self._placement}"]
 
     def _plan(self, cam: str, X: np.ndarray, B: np.ndarray, G0: np.ndarray, F0: np.ndarray) -> list[np.ndarray]:
         """Grasp-point targets for camera poses looking at the board centre from a cap above it."""
@@ -296,9 +340,12 @@ class AutoCalibration(ArmMover):
         self.progress.append(text)
         del self.progress[:-60]
 
-    def start(self, arms: list | None) -> dict:
+    def start(self, arms: list | None, add: bool = False) -> dict:
+        """``add``: the board was moved; capture it at its new place and solve with the earlier placements."""
         if self.state == "running":
             return {"ok": False, "message": "A calibration is running."}
+        if add and not (self._data and self._data["samples"]):
+            return {"ok": False, "message": "Nothing to add to: calibrate first."}
         if self.halted:
             return {"ok": False, "message": "Halted: press Resume first."}
         cams = [c for c in (arms or list(self.arms)) if c in self.arms]
@@ -306,8 +353,10 @@ class AutoCalibration(ArmMover):
             return {"ok": False, "message": "Choose at least one wrist camera."}
         self._stop.clear()
         self.state, self.phase, self.progress, self.result = "running", "starting", [], None
-        self._thread = threading.Thread(target=self._run, args=(cams,), daemon=True, name="calibration")
+        self._thread = threading.Thread(target=self._run, args=(cams, add), daemon=True, name="calibration")
         self._thread.start()
+        if add:
+            return {"ok": True, "message": f"Board placement {self._placement + 2}: calibrating {', '.join(cams)}."}
         return {"ok": True, "message": f"Calibrating {', '.join(cams)}."}
 
     def stop(self, reason: str = "stopped") -> bool:
@@ -317,14 +366,32 @@ class AutoCalibration(ArmMover):
         self._log(f"Stop requested ({reason}).")
         return True
 
-    def _run(self, cams: list[str]) -> None:
+    def _new_placement(self, add: bool) -> None:
+        frames = self._robot_frames()
+        if add:
+            # a calibration applied in between moved the bases in TF: keep the first placement's
+            self._rebase = bc.rebase(self._data["robot_frames"], frames)
+            self._placement = max(s.get("placement", 0) for s in self._data["samples"]) + 1
+            intrinsics = self._intrinsics()
+            if intrinsics != self._data["intrinsics"]:
+                for s in self._data["samples"]:
+                    s.setdefault("intrinsics", self._data["intrinsics"])
+                self._data["intrinsics"] = intrinsics
+        else:
+            self._data = {"board": self.board.to_dict(), "intrinsics": self._intrinsics(),
+                          "robot_frames": frames, "samples": []}
+            self._samples_path = CALIB_DIR / time.strftime("captures_%Y%m%d_%H%M%S.json")
+            self._clouds, self._placement, self._wanted, self._rebase = {}, 0, set(), {}
+
+    def _run(self, cams: list[str], add: bool = False) -> None:
         starts: dict[str, np.ndarray] = {}
         try:
             self._set_images(True)
             time.sleep(1.0)
-            self._data = {"board": self.board.to_dict(), "intrinsics": self._intrinsics(),
-                          "robot_frames": self._robot_frames(), "samples": []}
-            self._samples_path = CALIB_DIR / time.strftime("captures_%Y%m%d_%H%M%S.json")
+            self._new_placement(add)
+            self._wanted |= set(cams)
+            if self._placement:
+                self._log(f"Board placement {self._placement + 1}")
             for cam in cams:
                 robot = self.arms[cam]
                 self.phase = f"{cam}: start"
@@ -358,7 +425,7 @@ class AutoCalibration(ArmMover):
             self.phase = "solving"
             self.result = self._solve()
             self.state, self.phase = "done", "done"
-            self._log("Done: check the result and save it under a name.")
+            self._log("Done: weak, add a placement." if self.result.get("weak") else "Done: check the result and save it under a name.")
         except Aborted:
             self.state, self.phase = "stopped", "stopped"
             self._log("Stopped. The arms hold where they are.")
@@ -380,20 +447,48 @@ class AutoCalibration(ArmMover):
     def _save_samples(self) -> None:
         CALIB_DIR.mkdir(parents=True, exist_ok=True)
         self._samples_path.write_text(json.dumps(self._data))
+        if self._clouds:
+            bc.save_clouds(bc.clouds_path(self._samples_path), self._clouds)
 
     def _solve(self) -> dict:
+        """The CLI's solve of the saved captures, in a child process with one BLAS thread: next to the
+        studio's few hundred threads the same solve takes minutes instead of seconds. Stop kills it."""
         wrist_robots = {self.arms[c] for s in self._data["samples"] for c in s["cams"] if c in self.arms}
         reference = bc.REFERENCE_ROBOT if bc.REFERENCE_ROBOT in wrist_robots else sorted(wrist_robots)[0]
-        problem = bc.Problem(self._data, self.board, reference_robot=reference)
-        rms0 = problem.rms(problem.x0)
-        result, rms = problem.solve()
-        values = bc.calibration_values(problem, result)
-        std = {k: {"deg": round(v[0], 3), "mm": round(v[1], 2)} for k, v in result["std"].items()}
-        for c, r in rms.items():
-            self._log(f"  {c}: reprojection {r:.2f} px ({problem.count.get(c, sum(o['cam'] == c for o in problem.obs))} views)")
-        return {"values": values, "rms": {c: round(v, 3) for c, v in rms.items()},
-                "rms_before": {c: round(v, 3) for c, v in rms0.items()}, "std": std, "reference": reference,
-                "solved_mounts": problem.free_mount, "solved_bases": [problem.frames[c]["robot"] for c in problem.free_base],
+        out = self._samples_path.with_suffix(".result.json")
+        b = self.board
+        cmd = [sys.executable, bc.__file__, "--samples", str(self._samples_path), "--json", str(out),
+               "--reference", reference, "--wrists", ",".join(sorted(self._wanted)),
+               "--dict", b.dict_name, "--cols", str(b.cols), "--rows", str(b.rows), "--first-id", str(b.first_id)]
+        env = {**os.environ, "OPENBLAS_NUM_THREADS": "1", "OMP_NUM_THREADS": "1", "MKL_NUM_THREADS": "1"}
+        out.unlink(missing_ok=True)
+        proc = subprocess.Popen(cmd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+        try:
+            while proc.poll() is None:
+                self._check()
+                time.sleep(0.2)
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
+        if proc.returncode != 0 or not out.is_file():
+            err = (proc.stderr.read() or "").strip().splitlines()
+            raise RuntimeError(f"solve failed: {err[-1] if err else f'exit code {proc.returncode}'}")
+        s = json.loads(out.read_text())
+        out.unlink()
+        for c, r in s["rms"].items():
+            self._log(f"  {c}: reprojection {r:.2f} px ({s['views'].get(c, 0)} views)")
+        cloud = s["cloud"]
+        if cloud.get("before"):
+            for c, a in cloud["after"].items():
+                self._log(f"  {c}: {cloud['before'][c]['mm']} -> {a['mm']} mm from the static clouds")
+        self._log(f"  point clouds: {'applied' if cloud['used'] else cloud['message']}")
+        for reason in s["weak"]:
+            self._log(f"  weak: {reason}")
+        if s["weak"]:
+            self._log("Weak run: not to be saved. Add a placement or calibrate again.")
+        return {**{k: s[k] for k in ("values", "weak", "cloud", "placements", "rms", "rms_before", "std", "reference",
+                                     "solved_mounts", "solved_bases")},
                 "captures": str(self._samples_path.relative_to(WORKSPACE)), "board": self.board.to_dict(),
                 "mount_config": self._mount_config()}
 
@@ -417,6 +512,8 @@ class AutoCalibration(ArmMover):
             return {"ok": False, "message": "No calibration result to save."}
         if not valid_name(name):
             return {"ok": False, "message": "Name: letters, digits, '.', '_' or '-'."}
+        if self.result.get("weak"):
+            return {"ok": False, "message": "Weak calibration, not saved: " + "; ".join(self.result["weak"])}
         CALIB_DIR.mkdir(parents=True, exist_ok=True)
         path = CALIB_DIR / f"{name}.yaml"
         doc = {"name": name, "created": datetime.datetime.now().isoformat(timespec="seconds"), **self.result}
@@ -464,6 +561,24 @@ class AutoCalibration(ArmMover):
         return {"state": self.state, "phase": self.phase, "progress": self.progress[-14:],
                 "watching": self.watching, "visibility": dict(self.visibility),
                 "arms": self.arms, "static": list(self.cfg["static"]), "halted": self.halted,
-                "result": ({k: self.result[k] for k in ("rms", "rms_before", "solved_mounts", "solved_bases", "reference")}
-                           | {"values": self.result["values"]}) if self.result else None,
+                "result": ({k: self.result.get(k) for k in ("rms", "rms_before", "solved_mounts", "solved_bases",
+                                                             "reference", "weak", "placements")}
+                           | {"values": self.result["values"], "cloud": _cloud_summary(self.result.get("cloud"))})
+                if self.result else None,
+                "can_add": bool(self._data and self._data["samples"]) and self.state != "running",
                 "saved": self.saved()}
+
+
+def cloud_xyz(msg) -> np.ndarray:
+    """x, y, z of a PointCloud2 whose first fields are float32 x/y/z (the point cloud node's)."""
+    data = np.frombuffer(bytes(msg.data), np.uint8).reshape(-1, msg.point_step)
+    return np.ascontiguousarray(data[:, :12]).view(np.float32).reshape(-1, 3)
+
+
+def _cloud_summary(cloud: dict | None) -> dict | None:
+    if not cloud:
+        return None
+    if not cloud.get("used"):
+        return {"used": False, "message": cloud.get("message", "")}
+    return {"used": True, "scale": cloud["scale"],
+            "mm": {c: [cloud["before"][c]["mm"], a["mm"]] for c, a in cloud["after"].items()}}
