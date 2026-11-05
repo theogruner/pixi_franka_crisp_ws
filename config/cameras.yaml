@@ -41,7 +41,13 @@ pointcloud:
   world_frame: world
   zfar: 1.5                   # m, per camera
   crop: {min: [-0.4, -1.2, -0.05], max: [1.4, 1.2, 1.2]}   # world box around the workspace
-  voxel: 0.001                # m
+  # Merge per voxel: nearest = in each 1 cm cell only the cameras at most ~1.4x farther than the
+  # nearest one that sees it (a far camera's noisier copy of a surface a wrist camera sees is
+  # dropped, no doubled surfaces), then the mean of their points and colours weighted by
+  # 1/depth^2; average = that mean over all cameras; first = one point. Averaging needs voxels
+  # about the size of the cameras' disagreement: at 1 mm two cameras hardly share one (was 0.001).
+  voxel: 0.004                # m
+  merge: nearest              # nearest | average | first
   max_points: 400000          # 3 cameras x 480x270 engine pixels ~ 389k: no cap at 1 mm
   # Each camera's last cloud stays in the merge until it is this old (the cameras are processed
   # one after the other, ~0.3 s each, so a short limit dropped a view every other refresh).
@@ -54,6 +60,21 @@ pointcloud:
   # Cameras whose published images are turned by 180 deg relative to their optical frame in the
   # robot description (none: both wrist frames are right, see cam_image_flip in the URDF).
   flip_images: []
+  # Region of interest per camera, [x0, y0, x1, y1] as fractions of the image: the network gets
+  # the smallest window of (integer factor) x (engine 480x320) around it at that factor instead of
+  # the whole image at 2x (SVGA 960x600). A region of at most half the width / ~half the height
+  # runs at full resolution: twice the pixels on it and half the depth step, the rest of the view
+  # is dropped. Check the window on /ffs/<camera>/rgb (and the node's log).
+  roi:
+    zed_middle: [0.25, 0.24, 0.75, 0.76]   # centre 480x320 px
+    # Wrist cameras: at full resolution the disparity doubles, so the engine's max_disp (192 px)
+    # is reached at twice the distance (fx * baseline / 192): closer objects get no depth.
+    zed_right_arm: [0.25, 0.24, 0.75, 0.76]
+    zed_left_arm: [0.25, 0.24, 0.75, 0.76]
+  # Depth of a still camera averaged over its frames (less shimmer): alpha per new frame, a pixel
+  # more than tolerance (relative) off takes the new depth at once (something moved), hold frames
+  # a pixel keeps its depth when it has none; starts over when the camera moved move_m / turn_deg.
+  temporal: {alpha: 0.25, tolerance: 0.03, hold: 3, move_m: 0.002, turn_deg: 0.3}
   # Where each camera's (left optical) frame is in the world. Wrist cameras: a TF frame of the
   # robot description. Static cameras: {position, wxyz}; the studio sends the placed/aligned
   # pose of the active project (Camera placement) live, so they can stay out of here.

@@ -1,0 +1,9 @@
+# A policy entry that reuses an unchanged client config. A full client config (mappings,
+# actions, policy, server_address, home_pose) can also be put here directly.
+studio:
+  name: X-VLA · pick & place duplo · delta joint
+  kind: vision_language            # vision | vision_language (asks for a prompt)
+  prompts:
+    - Pick and Place
+  description: right arm, 50 Hz, 60 episodes
+client_config: ../../../src/franka_py/franka_client/config/robi_client.yaml

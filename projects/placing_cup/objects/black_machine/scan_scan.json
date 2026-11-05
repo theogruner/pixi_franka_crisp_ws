@@ -1,0 +1,42 @@
+{
+  "name": "black_machine",
+  "prompt": "black machine",
+  "live": true,
+  "views": 35,
+  "views_by_camera": {
+    "zed_left_arm": 14,
+    "zed_middle": 12,
+    "zed_right_arm": 9
+  },
+  "T_world_obj": [
+    [
+      1.0,
+      0.0,
+      0.0,
+      0.426943
+    ],
+    [
+      0.0,
+      1.0,
+      0.0,
+      0.132
+    ],
+    [
+      0.0,
+      0.0,
+      1.0,
+      0.149
+    ],
+    [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "extent_m": [
+    0.2579,
+    0.192,
+    0.25
+  ]
+}

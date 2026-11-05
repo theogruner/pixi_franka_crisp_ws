@@ -31,6 +31,9 @@ data_collector:
   component: data_collection
   trigger_service: /data_collector/record_data_trigger
   node: /data_collector   # its extra_topics parameter gets the topics of the enabled modalities
+  # The Record / Stop button as a std_srvs/Trigger service, with the dataset / task chosen on the
+  # page. The teleop's A calls it while the studio runs (else the collector's trigger directly).
+  record_service: /franka_studio/record_trigger
 
 # Startable components, shown in this order. cmd runs in bash from the workspace root in its own
 # process group; Stop sends SIGINT -> SIGTERM -> SIGKILL to the whole group. probe_* marks a

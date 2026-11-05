@@ -1,4 +1,4 @@
 # Written by the studio's viewer (Camera placement); merged into env.yaml scene.cameras.
 zed_middle:
-  position: [-0.14655, -0.07109, 0.47356]
-  wxyz: [-0.304092, 0.655119, -0.629481, 0.286533]
+  position: [-0.14458, 0.0609, 0.56459]
+  wxyz: [0.292548, -0.636305, 0.645653, -0.304408]

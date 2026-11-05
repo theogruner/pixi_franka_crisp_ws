@@ -1,0 +1,32 @@
+# Camera calibration (studio: Calibration card); apply it there or with
+# board_calibration.write_robot_values + the project's camera_poses.yaml.
+name: holder_v3
+created: '2026-11-04T23:01:30'
+values:
+  static:
+    zed_middle:
+      position: [-0.1388, 0.07749, 0.56817]
+      wxyz: [0.283357, -0.639276, 0.645072, -0.308086]
+  robots:
+    franka_left: {cam_pos_x: '-0.036671', cam_pos_y: '-0.036220', cam_pos_z: '0.020250',
+      cam_roll: '-0.017083', cam_pitch: '-0.003155', cam_yaw: '0.018672', xyz: -0.044481
+        0.596018 0.002037, rpy: 0.014208 -0.012727 0.006316}
+    franka_right: {cam_pos_x: '-0.033192', cam_pos_y: '-0.039527', cam_pos_z: '0.023635',
+      cam_roll: '0.003300', cam_pitch: '-0.013783', cam_yaw: '0.004966'}
+  notes: []
+rms: {zed_left_arm: 0.894, zed_middle: 0.996, zed_right_arm: 0.694}
+rms_before: {zed_left_arm: 1.034, zed_middle: 0.995, zed_right_arm: 0.817}
+std:
+  B: {deg: 0.718, mm: 5.59}
+  M:zed_middle: {deg: 0.83, mm: 7.9}
+  C:zed_left_arm: {deg: 0.173, mm: 1.81}
+  C:zed_right_arm: {deg: 0.58, mm: 6.56}
+  D:zed_left_arm: {deg: 0.637, mm: 6.12}
+reference: franka_right
+solved_mounts: [zed_left_arm, zed_right_arm]
+solved_bases: [franka_left]
+captures: config/calibrations/captures_20261104_225915.json
+board: {dict: DICT_4X4_50, cols: 3, rows: 4, first_id: 0, marker: 0.0565, sep: 0.0055}
+mount_config:
+  franka_right: {rpy_ee: 0 0 2.356194490, camera_holder: short, cam_holder_yaw: '2.356194490'}
+  franka_left: {rpy_ee: 0 0 2.356194490, camera_holder: short, cam_holder_yaw: '2.356194490'}

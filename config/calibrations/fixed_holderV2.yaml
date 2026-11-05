@@ -1,0 +1,47 @@
+# Camera calibration (studio: Calibration card); apply it there or with
+# board_calibration.write_robot_values + the project's camera_poses.yaml.
+name: fixed_holderV2
+created: '2026-11-05T00:54:15'
+values:
+  static:
+    zed_middle:
+      position: [-0.14655, 0.05739, 0.55875]
+      wxyz: [0.296442, -0.634301, 0.645023, -0.306153]
+  robots:
+    franka_left: {cam_pos_x: '-0.034304', cam_pos_y: '-0.046503', cam_pos_z: '0.022146',
+      cam_roll: '-0.034945', cam_pitch: '0.000216', cam_yaw: '0.017940', xyz: -0.038289
+        0.591944 -0.007081, rpy: 0.011981 -0.028574 0.003740}
+    franka_right: {cam_pos_x: '-0.035870', cam_pos_y: '-0.034853', cam_pos_z: '0.023335',
+      cam_roll: '-0.006346', cam_pitch: '-0.006274', cam_yaw: '0.008180'}
+  notes: []
+weak: []
+cloud:
+  used: false
+  before:
+    zed_left_arm: {mm: 3.19, matched: 0.243}
+    zed_right_arm: {mm: 2.32, matched: 0.206}
+  after:
+    zed_left_arm: {mm: 2.41, matched: 0.249}
+    zed_right_arm: {mm: 2.03, matched: 0.211}
+  warnings: ['D:zed_left_arm would move 13 mm / 1.9 deg']
+  message: 'not applied, board and clouds disagree: D:zed_left_arm would move 13 mm
+    / 1.9 deg'
+placements: 3
+rms: {zed_left_arm: 1.451, zed_middle: 1.058, zed_right_arm: 1.175}
+rms_before: {zed_left_arm: 16.605, zed_middle: 1.658, zed_right_arm: 16.886}
+std:
+  B:0: {deg: 0.304, mm: 0.75}
+  B:1: {deg: 0.294, mm: 0.75}
+  B:2: {deg: 0.317, mm: 0.81}
+  M:zed_middle: {deg: 0.284, mm: 2.67}
+  C:zed_left_arm: {deg: 0.214, mm: 2.15}
+  C:zed_right_arm: {deg: 0.184, mm: 1.83}
+  D:zed_left_arm: {deg: 0.308, mm: 1.45}
+reference: franka_right
+solved_mounts: [zed_left_arm, zed_right_arm]
+solved_bases: [franka_left]
+captures: config/calibrations/captures_20261105_004810.json
+board: {dict: DICT_4X4_50, cols: 3, rows: 4, first_id: 0, marker: 0.0565, sep: 0.0055}
+mount_config:
+  franka_right: {rpy_ee: 0 0 2.356194490, camera_holder: short, cam_holder_yaw: '2.356194490'}
+  franka_left: {rpy_ee: 0 0 2.356194490, camera_holder: short, cam_holder_yaw: '2.356194490'}

@@ -1,0 +1,42 @@
+{
+  "name": "wooden_stand",
+  "prompt": "wooden stand",
+  "live": true,
+  "views": 45,
+  "views_by_camera": {
+    "zed_left_arm": 14,
+    "zed_middle": 16,
+    "zed_right_arm": 15
+  },
+  "T_world_obj": [
+    [
+      1.0,
+      0.0,
+      0.0,
+      0.484077
+    ],
+    [
+      0.0,
+      1.0,
+      0.0,
+      -0.098414
+    ],
+    [
+      0.0,
+      0.0,
+      1.0,
+      0.186
+    ],
+    [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "extent_m": [
+    0.1558,
+    0.1888,
+    0.34
+  ]
+}

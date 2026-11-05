@@ -1,0 +1,46 @@
+# Camera calibration (studio: Calibration card); apply it there or with
+# board_calibration.write_robot_values + the project's camera_poses.yaml.
+name: fixed_holder
+created: '2026-11-04T23:49:13'
+values:
+  static:
+    zed_middle:
+      position: [-0.14458, 0.0609, 0.56459]
+      wxyz: [0.292548, -0.636305, 0.645653, -0.304408]
+  robots:
+    franka_left: {cam_pos_x: '-0.043253', cam_pos_y: '-0.044553', cam_pos_z: '0.025062',
+      cam_roll: '-0.031648', cam_pitch: '-0.000216', cam_yaw: '0.019475', xyz: -0.045905
+        0.586224 0.002539, rpy: 0.015434 -0.021552 0.004937}
+    franka_right: {cam_pos_x: '-0.034445', cam_pos_y: '-0.036821', cam_pos_z: '0.023560',
+      cam_roll: '-0.006618', cam_pitch: '-0.009423', cam_yaw: '0.007534'}
+  notes: []
+weak: []
+cloud:
+  used: false
+  before:
+    zed_left_arm: {mm: 4.62, matched: 0.22}
+    zed_right_arm: {mm: 3.69, matched: 0.222}
+  after:
+    zed_left_arm: {mm: 2.06, matched: 0.225}
+    zed_right_arm: {mm: 2.23, matched: 0.225}
+  warnings: ['D:zed_left_arm would move 13 mm / 1.7 deg']
+  message: 'not applied, board and clouds disagree: D:zed_left_arm would move 13 mm
+    / 1.7 deg'
+placements: 2
+rms: {zed_left_arm: 1.554, zed_middle: 1.023, zed_right_arm: 1.124}
+rms_before: {zed_left_arm: 8.88, zed_middle: 1.356, zed_right_arm: 7.865}
+std:
+  B:0: {deg: 0.374, mm: 0.96}
+  B:1: {deg: 0.356, mm: 0.88}
+  M:zed_middle: {deg: 0.369, mm: 3.53}
+  C:zed_left_arm: {deg: 0.231, mm: 2.08}
+  C:zed_right_arm: {deg: 0.236, mm: 2.42}
+  D:zed_left_arm: {deg: 0.376, mm: 1.8}
+reference: franka_right
+solved_mounts: [zed_left_arm, zed_right_arm]
+solved_bases: [franka_left]
+captures: config/calibrations/captures_20261104_234134.json
+board: {dict: DICT_4X4_50, cols: 3, rows: 4, first_id: 0, marker: 0.0565, sep: 0.0055}
+mount_config:
+  franka_right: {rpy_ee: 0 0 2.356194490, camera_holder: short, cam_holder_yaw: '2.356194490'}
+  franka_left: {rpy_ee: 0 0 2.356194490, camera_holder: short, cam_holder_yaw: '2.356194490'}

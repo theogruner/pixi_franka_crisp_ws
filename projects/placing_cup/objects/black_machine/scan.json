@@ -1,0 +1,50 @@
+{
+  "name": "black_machine",
+  "prompt": "black machine",
+  "live": true,
+  "views": 35,
+  "views_by_camera": {
+    "zed_left_arm": 14,
+    "zed_middle": 12,
+    "zed_right_arm": 9
+  },
+  "T_world_obj": [
+    [
+      1.0,
+      0.0,
+      0.0,
+      0.407287
+    ],
+    [
+      0.0,
+      1.0,
+      0.0,
+      0.115109
+    ],
+    [
+      0.0,
+      0.0,
+      1.0,
+      0.129245
+    ],
+    [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "extent_m": [
+    0.2931,
+    0.1889,
+    0.2357
+  ],
+  "cad": {
+    "file": "/home/ken/Downloads/parts/Assemblage_Pixie.stl",
+    "scale": 0.001,
+    "up": "y",
+    "anchor": "top",
+    "median_mm": 3.63,
+    "inliers": 0.708
+  }
+}

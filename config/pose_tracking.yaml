@@ -7,19 +7,50 @@ cpu_threads: 8                       # OpenMP threads (Open3D, torch); all cores
 # Its RGB-D comes from the point cloud node (/ffs/<camera>/rgb|depth|camera_info), which computes
 # it only while subscribed, so the Point cloud component has to run too.
 camera: zed_middle
+# All cameras: the static one first (it sets the pace, its masks decide); the wrist cameras' newest
+# frames within max_skew_s join, aligned onto the static scene around the objects (their hand-eye
+# calibration is 1-3 cm off). They see from the side what the static one cannot (handle, pegs).
+# [zed_middle] alone: as before (one camera).
+cameras: [zed_middle, zed_left_arm, zed_right_arm]
+max_skew_s: 0.15
+align:
+  radius: 0.3                        # m of scene around the objects the wrist views are aligned on
+  keep_m: 0.01                       # a wrist camera's correction is kept while it moves less than this
 world_frame: world
+
+# Fit options per object name (any project), over `defaults`. upright: stands on the table as
+# scanned (position + turn about the vertical; lifted more than 3 cm: all six degrees again).
+# turn_from: depth (the turn from the geometry: a stand's pegs) | outline (from the rendered
+# outline against the masks of all cameras: a cup's handle, which the depth barely holds).
+object_options:
+  defaults: {upright: true, turn_from: depth}
+  cup: {turn_from: outline}
+  grey_mug: {turn_from: outline}
+  green_mug: {turn_from: outline}
 rate: 30.0                           # Hz cap of the tracking loop
 
 # Text -> masks. grounded_sam2: Grounding DINO + SAM 2.1, open weights (~150 ms per segmentation);
 # sam3: SAM 3, gated weights (request facebook/sam3 on Hugging Face).
 segmenter:
-  kind: grounded_sam2
-  box_threshold: 0.2
-  text_threshold: 0.2 
+  kind: sam3                         # ~190 ms; knows when an object is absent (grounded_sam2 does not)
+  threshold: 0.4                     # sam3: min score of an instance
+  box_threshold: 0.2                 # grounded_sam2 only
+  text_threshold: 0.2
 
 tracker:
   async_segmentation: true           # segment in the background, track on geometry at camera rate
-  seg_period: 30                     # frames between segmentations while all objects are tracked
+  seg_period: 10                     # frames between segmentations while all objects are tracked
   support_z: 0.0                     # world z of the table top: points just above it are ignored
-  min_fitness: 0.5
+  min_fitness: 0.5                   # share of the object's observed points within fit_dist of the mesh
+  fit_dist: 0.01                     # m; stereo noise of one view: at 5 mm, correct poses scored < 0.5
+  erode_px: 2                        # mask edges shrunk before lifting (depth there is background)
   min_iou: 0.5
+  reg_min_iou: 0.5                   # rendered vs segmented masks (mean over cameras) to accept a
+                                     # (re-)registration; the scanned cup reaches 0.5-0.7 (thin walls, holes)
+  # icp: the mesh is fitted onto the depth each frame. points: points on the object are followed
+  # in 2D, anchored to fixed mesh points (consistent: no sliding; turns of symmetric objects show),
+  # jointly refined with the depth; ICP only on frames with too few agreeing tracks.
+  mode: points
+  point_tracker: bootstapir          # bootstapir: GPU, ~18 ms, no drift | lk: optical flow, ~1 ms, drifts
+  points_per_object: 64
+  points_refine: true                # off: the pose from the point tracks alone
