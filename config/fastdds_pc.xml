@@ -41,11 +41,25 @@
             <sendBufferSize>134217728</sendBufferSize>
             <receiveBufferSize>134217728</receiveBufferSize>
         </transport_descriptor>
+        <!-- Shared memory for participants on this PC. useBuiltinTransports=false dropped Fast
+             DDS's default SHM transport too, so every image / cloud between local processes
+             (FFS -> pose tracking, studio, rviz) went through UDP loopback in 64 KB datagrams:
+             hundreds of MB/s of kernel copies and softirqs, enough to freeze the desktop with
+             point cloud + pose tracking running. Fast DDS picks SHM for same-host peers and UDP
+             for the Jetson. Segment: per participant in /dev/shm, large enough for a merged
+             cloud (400k points x 16 B ~ 6.4 MB) plus a few queued images. A process in a
+             container with its own /dev/shm but the host network would need UDP only. -->
+        <transport_descriptor>
+            <transport_id>shm_transport</transport_id>
+            <type>SHM</type>
+            <segment_size>33554432</segment_size>
+        </transport_descriptor>
     </transport_descriptors>
 
     <participant profile_name="pc_participant" is_default_profile="true">
         <rtps>
             <userTransports>
+                <transport_id>shm_transport</transport_id>
                 <transport_id>udp_transport</transport_id>
             </userTransports>
             <useBuiltinTransports>false</useBuiltinTransports>
