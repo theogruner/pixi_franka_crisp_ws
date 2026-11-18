@@ -65,10 +65,20 @@ components:
     label: Object poses
     icon: cube
     # Tracks the objects of the active project (env.yaml `objects`) on the point cloud's RGB-D:
-    # ../pose_tracking, config/pose_tracking.yaml. Needs the Point cloud component; also started /
-    # stopped by the Object poses modality (Observation space).
+    # ../pose_tracking, config/pose_tracking.yaml. Its masks come from Object detection (one SAM 3
+    # for both, `masks_from` there); also started / stopped by the Object poses modality.
     cmd: pixi run -e humble pose-tracking
     probe_topic: /pose_tracking/status
+    needs: [pointcloud, scene_graph]  # started first when not up
+  scene_graph:
+    label: Object detection
+    icon: cube
+    # SAM 3 on every camera for the objects named in the Objects card (Detect), fused into 3D
+    # objects and their scene graph: ../pose_tracking detect_node, config/scene_graph.yaml. Started
+    # by the Detect switch, and by Object poses (it finds the tracked objects' masks too).
+    cmd: pixi run -e humble scene-graph
+    probe_topic: /scene_graph/status
+    needs: [pointcloud]
   teleop:
     label: Teleoperation
     icon: gamepad

@@ -30,6 +30,12 @@ object_options:
   green_mug: {turn_from: outline}
 rate: 30.0                           # Hz cap of the tracking loop
 
+# Masks: detection = the Object detection node's (config/scene_graph.yaml): one SAM 3 for detection
+# and tracking, cleaned masks (robot removed, one owner per pixel, checked across the cameras); the
+# studio starts that component with this one. own = the segmenter below, in this node (as before).
+# The segmenter below is still used for live scans.
+masks_from: detection
+
 # Text -> masks. grounded_sam2: Grounding DINO + SAM 2.1, open weights (~150 ms per segmentation);
 # sam3: SAM 3, gated weights (request facebook/sam3 on Hugging Face).
 segmenter:
@@ -55,3 +61,15 @@ tracker:
   point_tracker: bootstapir          # bootstapir: GPU, ~18 ms, no drift | lk: optical flow, ~1 ms, drifts
   points_per_object: 64
   points_refine: true                # off: the pose from the point tracks alone
+  # Checks on every mask moment (~2 Hz with masks_from: detection): the pose of that moment against
+  # the masks (IoU) and the depth of all cameras (see-through: a camera sees the background where the
+  # model claims a surface). Good: corrected on the masked depth of all cameras (drift-free). Bad:
+  # re-registered; lost after bad_checks_lost in a row. Registration scores see-through too.
+  min_fitness_between: 0.3          # depth fit on frames between masks (their depth includes background)
+  # A re-registration comes back as it was unless another pose is clearly better (a stand turned by
+  # half a turn, a cup's handle side: near-symmetric shapes fit alike)
+  reg_keep_bonus: 0.15
+  max_see_through: 0.5               # a correct pose of a fitting model: 0.02-0.2 (stand, scanned cup)
+  see_through_m: 0.02
+  bad_checks_lost: 2
+  correct_on_masks: true

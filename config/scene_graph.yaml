@@ -1,0 +1,46 @@
+# Object detection + scene graph (../pose_tracking, pose_tracking/detect.py), started by
+# `pixi run scene-graph` (scripts/run_scene_graph.sh) or the studio's Object detection component.
+# What to look for comes from the studio (Objects card -> Detect: /scene_graph/request) and from the
+# pose tracking (masks_from: detection: its objects on /scene_graph/track_request, while it runs;
+# the cleaned masks go back on /scene_graph/masks). With neither, nothing runs on the GPU and the
+# cameras' RGB-D is not requested.
+repo: ../pose_tracking               # relative to this workspace
+cpu_threads: 8
+
+# RGB-D of the point cloud node (/ffs/<camera>/...): the Point cloud component has to run.
+cameras: [zed_middle, zed_left_arm, zed_right_arm]
+# The wrist cameras are aligned onto the static camera's scene around the objects (their hand-eye
+# calibration is 1-3 cm off, which would split one object in two). [] = off.
+static_cameras: [zed_middle]
+align: {radius: 0.4, max_shift: 0.04, max_turn_deg: 6.0}   # a larger correction is a wrong alignment
+world_frame: world
+rate: 2.0                            # Hz cap; one moment = SAM 3 on every camera (~0.15-0.2 s each)
+max_age_s: 1.5                       # a camera's newest frame older than this is left out
+unload_after_s: 300                  # GPU memory freed this long after detection was switched off
+
+segmenter:
+  kind: sam3                         # gated weights (facebook/sam3 on Hugging Face); grounded_sam2: open
+  threshold: 0.4                     # min score of an instance
+
+# The robot is not an object (SAM 3 calls a black gripper a "black machine"): points within capsules
+# along each arm's TF frames are dropped, and a mask mostly on the robot's silhouette in an image is
+# dropped whole (a wrist camera's own fingers are too close for stereo: their depth is anywhere).
+robot:
+  arms: [franka_right, franka_left]
+  capsules:
+    - {chain: ["{arm}_fr3_link0", "{arm}_fr3_link1", "{arm}_fr3_link3", "{arm}_fr3_link4", "{arm}_fr3_link5", "{arm}_fr3_link7", "{arm}_fr3_link8"], radius: 0.1}
+    - {chain: ["{arm}_fr3_link8", "{arm}_rh_p12_rn_base", "{arm}_rh_p12_rn_grasp_point"], radius: 0.07}
+    - {chain: ["{arm}_fr3_link8", "{arm}_zed_camera_center"], radius: 0.1}
+
+# pose_tracking/detect.py DetectConfig; the defaults hold for the table scene.
+detect:
+  support_z: 0.0                     # world z of the table top, about: measured in the depth every moment
+  crop: {min: [0.0, -0.8, -0.05], max: [1.2, 0.8, 1.0]}   # the workspace (not the operator behind the robots)
+  max_size: 0.8                      # m box diagonal: larger is the table, a wall, the frame around the table
+  match_m: 0.025                     # points of two cameras' masks this close: the same object
+  min_support: 0.6                   # found / (found + missed) of the cameras that see an object
+  strong_score: 0.7                  # ... unless one camera is this sure (and only one missed it)
+  confirm_hits: 2                    # moments until an object found by one camera only shows
+  forget_s: 4.0                      # s an object stays after it was last found
+  near_m: 0.05                       # next to: closer than this
+  merge_touching: true               # SAM 3 returns some things in pieces (a stand: pole, arms, base)
