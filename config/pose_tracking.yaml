@@ -18,12 +18,13 @@ align:
   keep_m: 0.01                       # a wrist camera's correction is kept while it moves less than this
 world_frame: world
 
-# Fit options per object name (any project), over `defaults`. upright: stands on the table as
-# scanned (position + turn about the vertical; lifted more than 3 cm: all six degrees again).
-# turn_from: depth (the turn from the geometry: a stand's pegs) | outline (from the rendered
-# outline against the masks of all cameras: a cup's handle, which the depth barely holds).
+# Fit options per object name (any project), over `defaults`. Poses are full SE(3).
+# turn_from: depth (all six degrees from the geometry: a stand's pegs) | outline (the geometry,
+# but the turn about the object's own axis from the rendered outline against the masks of all
+# cameras: a cup's handle, which the depth barely holds; tilted or hanging as well).
+# upright: true pins it standing as scanned (position + turn about the vertical); off.
 object_options:
-  defaults: {upright: true, turn_from: depth}
+  defaults: {upright: false, turn_from: depth}
   cup: {turn_from: outline}
   grey_mug: {turn_from: outline}
   green_mug: {turn_from: outline}

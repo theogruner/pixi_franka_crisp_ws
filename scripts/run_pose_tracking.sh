@@ -22,8 +22,9 @@ echo "Object pose tracking ($repo)"
 
 # env -i: not the humble env of this workspace (its PYTHONPATH / ROS overlay); the PC's Fast DDS
 # profile, so the Jetson's and this PC's topics both reach the node. OMP_NUM_THREADS: Open3D and
-# torch would take every core otherwise (registration froze the PC).
-env -i HOME="$HOME" PATH=/usr/bin:/bin POSE_FASTDDS_PROFILE="$ROOT_DIR/config/fastdds_pc.xml" \
+# torch would take every core otherwise (registration froze the PC). PYTHONFAULTHANDLER: a
+# segfault in native code (Open3D, torch) prints the Python stack of every thread.
+env -i HOME="$HOME" PATH=/usr/bin:/bin PYTHONFAULTHANDLER=1 POSE_FASTDDS_PROFILE="$ROOT_DIR/config/fastdds_pc.xml" \
     OMP_NUM_THREADS="$threads" MKL_NUM_THREADS="$threads" OPENBLAS_NUM_THREADS="$threads" \
     "$(command -v pixi)" run --manifest-path "$repo/pixi.toml" node --config-b64 "$config_b64" &
 pid=$!
