@@ -12,8 +12,21 @@ pixi run studio-test       # unit tests (no ROS graph needed)
 Options: `python -m franka_studio --host 0.0.0.0` (reachable from the network, set
 `viewer.host` too), `--no-viewer`, `--keep-components` (leave the stack running on exit),
 `--config other.yaml`, `--debug` (verbose logs incl. every HTTP request; by default only
-warnings and errors reach the terminal). Append `?theme=light` or `?theme=dark` to the URL to force a theme; the
-toggle in the top bar is remembered per browser.
+warnings and errors reach the terminal). Append `?theme=light`, `?theme=dark` or `?theme=auto` to the URL to force a
+theme; the choice in the `⋯` menu is remembered per browser.
+
+### Layout
+
+The 3D scene is the main view. Around it are three docks: the **sidebar** (Stack, Observation space; stacked and
+collapsible), the **inspector** (Policy · Record · Objects · Calibrate · Cluster; tabs) and the **bottom** area
+(Observation · Cameras · Console; tabs). Drag a tab or a sidebar title to move a panel to another dock, and drag the
+gaps between docks to resize them (double-click resets). The toolbar buttons show/hide each dock; below 1280 px the
+sidebar floats over the scene, below 860 px everything stacks in one column. Arrangement, sizes and visibility are
+remembered per browser (`⋯` → *Reset layout*). The status capsule in the middle of the toolbar shows what the studio is
+doing; click it to open that panel. Dots on the tabs show state while another panel is open.
+
+A new widget is one `<section class="panel" data-dock="inspector" data-title="…" data-icon="i-…">` in `index.html`
+plus a render function in `app.js`; it gets its tab, drag-and-drop and persistence automatically.
 
 ## What it does
 
@@ -150,4 +163,5 @@ relative to the right, static cameras). *Save* stores the result by name in
   its process group (output streamed, one Stop for everything).
 * The cameras component defaults to the ZED rig aggregator; prepend your ZED launch (e.g.
   zed_remote_launcher) in `config/studio.yaml` if the cameras are not started elsewhere.
-* The 3D viewer needs WebGL; it stays dark in the light theme by design.
+* The 3D viewer needs WebGL; it stays dark in the light theme by design. Space (Stop) does not reach the page while
+  the 3D view has keyboard focus (it is another origin); click outside it or use the Stop button.

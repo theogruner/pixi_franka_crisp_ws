@@ -2,161 +2,144 @@
 <html lang="en" data-theme="dark">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
   <title>Franka Studio</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%2338bdf8'/%3E%3Cstop offset='1' stop-color='%23a78bfa'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='9' fill='url(%23g)'/%3E%3Cpath d='M10 22V10h12M10 16h8' stroke='%23fff' stroke-width='3' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%231d1d1f'/%3E%3Cpath d='M11.5 23V9h10M11.5 16h7.5' stroke='%23fff' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..700&family=JetBrains+Mono:wght@400;500&display=swap">
   <link rel="stylesheet" href="/static/app.css">
   <script>
-    // ?theme=light|dark wins over the remembered choice
+    // Theme before first paint: ?theme=light|dark|auto wins over the remembered choice (default dark).
     try {
-      const t = new URLSearchParams(location.search).get("theme") || localStorage.getItem("studio-theme");
-      if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
+      const t = new URLSearchParams(location.search).get("theme") || localStorage.getItem("studio-theme") || "dark";
+      const dark = t === "auto" ? matchMedia("(prefers-color-scheme: dark)").matches : t !== "light";
+      document.documentElement.dataset.theme = dark ? "dark" : "light";
+      document.documentElement.dataset.themePref = ["light", "dark", "auto"].includes(t) ? t : "dark";
     } catch (e) {}
   </script>
 </head>
 <body>
-  <div class="backdrop" aria-hidden="true"></div>
 
-  <header class="topbar">
-    <div class="brand">
-      <div class="brand-mark">F</div>
-      <div class="brand-text">
+  <!-- ================================================================ toolbar -->
+  <header class="toolbar">
+    <div class="tb-left">
+      <button class="tb-btn" id="toggle-sidebar" title="Show / hide the sidebar" aria-label="Toggle sidebar">
+        <svg class="i"><use href="#i-sidebar-left"/></svg></button>
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">F</div>
         <span class="brand-name">Franka Studio</span>
-        <span class="brand-sub" id="env-name">no scene</span>
       </div>
-    </div>
-
-    <div class="topbar-center">
-      <label class="select-pill" title="Project">
+      <label class="popup" title="Project">
         <svg class="i"><use href="#i-folder"/></svg>
         <select id="project-select" aria-label="Project"></select>
+        <svg class="i chev"><use href="#i-chevron"/></svg>
       </label>
-      <div class="chip" id="mode-chip"><span class="dot"></span><span id="mode-text">idle</span></div>
     </div>
 
-    <div class="topbar-right">
-      <button class="btn btn-soft" id="home-top-btn" title="Drive the arms to the home joints (home_pose of the env)">
-        <svg class="i"><use href="#i-home"/></svg>Home</button>
-      <button class="btn btn-halt" id="halt-btn" title="Stop: the arms hold where they are; teleop, policy, homing and calibration are ignored until Resume (Space)">
-        <svg class="i"><use href="#i-stop"/></svg>Stop</button>
-      <button class="btn btn-resume" id="resume-btn" hidden title="Accept commands again (Run policy resumes by itself)">
-        <svg class="i"><use href="#i-play"/></svg>Resume</button>
-      <div class="conn" id="conn" title="Connection to the studio"><span class="dot"></span><span>offline</span></div>
-      <button class="icon-btn" id="layout-reset" title="Reset the widget layout (drag a widget by its title to move it)">
-        <svg class="i"><use href="#i-layout"/></svg></button>
-      <button class="icon-btn" id="theme-toggle" title="Toggle light / dark">
-        <svg class="i theme-dark"><use href="#i-moon"/></svg>
-        <svg class="i theme-light"><use href="#i-sun"/></svg>
-      </button>
+    <button class="status" id="mode-chip" title="What the studio is doing (click to open its panel)">
+      <span class="dot"></span><span id="mode-text">idle</span>
+    </button>
+
+    <div class="tb-right">
+      <span class="conn" id="conn" title="Connection to the studio"><span class="dot"></span><span class="conn-text">offline</span></span>
+      <button class="tb-btn tb-text" id="home-top-btn" title="Drive the arms to the home joints (home_pose of the env)">
+        <svg class="i"><use href="#i-home"/></svg><span>Home</span></button>
+      <button class="btn-halt" id="halt-btn" title="Stop: the arms hold where they are; teleop, policy, homing and calibration are ignored until Resume">
+        <svg class="i"><use href="#i-stop-fill"/></svg><span>Stop</span><kbd>Space</kbd></button>
+      <span class="tb-sep"></span>
+      <button class="tb-btn" id="toggle-bottom" title="Show / hide the bottom panel" aria-label="Toggle bottom panel">
+        <svg class="i"><use href="#i-panel-bottom"/></svg></button>
+      <button class="tb-btn" id="toggle-inspector" title="Show / hide the inspector" aria-label="Toggle inspector">
+        <svg class="i"><use href="#i-sidebar-right"/></svg></button>
+      <div class="menu-wrap">
+        <button class="tb-btn" id="menu-btn" title="View options" aria-label="View options" aria-haspopup="true" aria-expanded="false">
+          <svg class="i"><use href="#i-more"/></svg></button>
+        <div class="menu" id="menu" hidden role="menu">
+          <div class="menu-label">Appearance</div>
+          <div class="segmented seg-block" id="theme-seg">
+            <button data-theme="auto">Auto</button>
+            <button data-theme="light">Light</button>
+            <button data-theme="dark">Dark</button>
+          </div>
+          <div class="menu-sep"></div>
+          <button class="menu-item" id="layout-reset" role="menuitem"><svg class="i"><use href="#i-layout"/></svg>Reset layout</button>
+          <div class="menu-sep"></div>
+          <div class="menu-label">Layout</div>
+          <p class="menu-note">Drag a tab or a sidebar title to move a panel between the sidebar, the inspector and the bottom
+            area. Drag the gaps between them to resize.</p>
+          <div class="menu-sep"></div>
+          <div class="menu-label">Shortcuts</div>
+          <div class="menu-kbd"><span>Stop the arms</span><kbd>Space</kbd></div>
+          <div class="menu-kbd"><span>Run the policy (in the prompt)</span><kbd>Ctrl ↵</kbd></div>
+          <p class="menu-note">Space works whenever you are not typing, but not while the 3D view has focus.</p>
+        </div>
+      </div>
     </div>
   </header>
 
-  <main class="layout">
-    <!-- ============ left rail ============ -->
-    <aside class="rail rail-left" data-col="left">
-      <section class="card" id="stack-card">
-        <div class="card-head">
-          <h2><svg class="i"><use href="#i-layers"/></svg>Stack</h2>
-          <div class="card-actions">
-            <button class="btn btn-ghost btn-sm" id="start-all" title="Start robot, cameras and teleop">Start all</button>
-            <button class="btn btn-ghost btn-sm danger-text" id="stop-all" title="Stop everything the studio started">Stop all</button>
+  <!-- shown while /robot_halt is latched -->
+  <div class="halt-banner" id="halt-banner" hidden role="alert">
+    <svg class="i"><use href="#i-hand"/></svg>
+    <div><b>Stopped.</b> The arms hold their pose: teleop, policy, homing and calibration are ignored.</div>
+    <button class="btn btn-resume" id="resume-btn" title="Accept commands again (Run policy resumes by itself)">
+      <svg class="i"><use href="#i-play"/></svg>Resume</button>
+  </div>
+
+  <!-- ================================================================ workspace -->
+  <div class="workspace" id="workspace">
+
+    <!-- ---------------------------------------------------- sidebar (stacked panels) -->
+    <aside class="dock dock-stack" id="dock-sidebar" data-dock="sidebar" aria-label="Sidebar">
+      <div class="dock-panels">
+
+        <section class="panel" id="stack-card" data-title="Stack" data-icon="i-layers" data-dock="sidebar">
+          <header class="panel-head">
+            <h2 class="panel-title">Stack</h2>
+            <div class="panel-actions">
+              <button class="btn btn-sm btn-plain" id="start-all" title="Start robot, cameras and teleop">Start all</button>
+              <button class="btn btn-sm btn-plain tint-red" id="stop-all" title="Stop everything the studio started">Stop all</button>
+            </div>
+          </header>
+          <div class="panel-body">
+            <div class="group" id="components"></div>
           </div>
-        </div>
-        <div class="components" id="components"></div>
-      </section>
+        </section>
 
-      <section class="card" id="space-card" hidden>
-        <div class="card-head">
-          <h2><svg class="i"><use href="#i-sliders"/></svg>Observation space</h2>
-          <span class="muted small" id="space-sub"></span>
-        </div>
-        <div class="modalities" id="modalities"></div>
-        <div class="pc-status" id="pc-status" hidden></div>
-        <div class="pc-status" id="pt-status" hidden></div>
-        <div class="record-line" id="record-line"></div>
-      </section>
+        <section class="panel" id="space-card" data-title="Observation space" data-tab="Inputs" data-icon="i-sliders" data-dock="sidebar" hidden>
+          <header class="panel-head">
+            <h2 class="panel-title">Observation space</h2>
+            <span class="panel-sub" id="space-sub"></span>
+          </header>
+          <div class="panel-body">
+            <div class="group" id="modalities"></div>
+            <div class="live-box" id="pc-status" hidden></div>
+            <div class="live-box" id="pt-status" hidden></div>
+            <p class="footnote" id="record-line"></p>
+          </div>
+        </section>
 
-      <section class="card" id="calib-card">
-        <div class="card-head">
-          <h2><svg class="i"><use href="#i-target"/></svg>Camera calibration</h2>
-          <label class="toggle small" title="Board detection (subscribes the camera images while on)">
-            <input type="checkbox" id="calib-watch"><span></span>board</label>
-        </div>
-        <div class="calib-vis" id="calib-vis"></div>
-        <div class="calib-arms" id="calib-arms"></div>
-        <p class="muted small calib-hint">Board lying still on the table; bring each arm (teleop) to a pose where its wrist
-          camera sees it. The arm then probes and drives to 8 views around the board by itself. Then move the board to
-          another spot the middle camera sees and <b>Add placement</b>: 2–3 placements spread over the workspace fit it
-          far better than one. With the point cloud running, the clouds fine-tune the result.</p>
-        <div class="btn-row">
-          <button class="btn btn-primary" id="calib-start"><svg class="i"><use href="#i-target"/></svg>Calibrate</button>
-          <button class="btn btn-soft" id="calib-add" disabled><svg class="i"><use href="#i-target"/></svg>Add placement</button>
-        </div>
-        <div class="calib-progress" id="calib-progress" hidden></div>
-        <div class="calib-result" id="calib-result" hidden></div>
-        <div class="calib-save" id="calib-save-row" hidden>
-          <input id="calib-name" placeholder="name, e.g. holders_v2" spellcheck="false">
-          <button class="btn btn-soft" id="calib-save"><svg class="i"><use href="#i-download"/></svg>Save</button>
-        </div>
-        <div class="sub-head">Saved calibrations</div>
-        <div class="calib-save">
-          <select id="calib-saved"></select>
-          <button class="btn btn-soft" id="calib-apply" title="Write it into the robot configs and the project's camera poses">Apply</button>
-        </div>
-        <button class="btn btn-soft btn-sm calib-restart" id="calib-restart" hidden><svg class="i"><use href="#i-refresh"/></svg>Restart robots to load it</button>
-      </section>
-
-      <section class="card" id="cluster-card">
-        <div class="card-head">
-          <h2><svg class="i"><use href="#i-cloud"/></svg>Cluster</h2>
-          <span class="muted small" id="cluster-host"></span>
-        </div>
-
-        <div class="sub-head">Copy &amp; convert</div>
-        <div class="field-row">
-          <div class="kv"><span>Dataset</span><b id="sync-target">—</b></div>
-        </div>
-        <label class="field">
-          <span>Conversion config</span>
-          <select id="convert-config"></select>
-        </label>
-        <div class="btn-row">
-          <button class="btn btn-soft" id="sync-only"><svg class="i"><use href="#i-upload"/></svg>Copy</button>
-          <button class="btn btn-primary" id="sync-convert"><svg class="i"><use href="#i-sparkles"/></svg>Copy + convert</button>
-        </div>
-
-        <div class="sub-head">Training</div>
-        <label class="field">
-          <span>Training config</span>
-          <select id="train-config"></select>
-        </label>
-        <button class="btn btn-primary btn-block" id="train-btn"><svg class="i"><use href="#i-rocket"/></svg>Start training</button>
-
-        <div class="sub-head with-action">
-          <span>Jobs</span>
-          <button class="icon-btn sm" id="jobs-refresh" title="Refresh SLURM states"><svg class="i"><use href="#i-refresh"/></svg></button>
-        </div>
-        <div class="jobs" id="jobs"><div class="empty">No cluster jobs yet.</div></div>
-      </section>
+      </div>
     </aside>
 
-    <!-- ============ center ============ -->
-    <section class="center" data-col="center">
-      <section class="card viewer-card" id="viewer-card">
-        <div class="viewer-head">
-          <div class="viewer-title">
-            <h2><svg class="i"><use href="#i-cube"/></svg>Scene</h2>
-            <span class="muted small" id="viewer-sub">gym view of the active env</span>
+    <div class="split split-x" data-split="sidebar" title="Drag to resize · double-click to reset"></div>
+
+    <!-- ---------------------------------------------------- stage: scene + bottom dock -->
+    <main class="stage">
+      <section class="scene" id="viewer-card">
+        <header class="scene-head">
+          <div class="scene-title">
+            <svg class="i"><use href="#i-cube"/></svg>
+            <h2>Scene</h2>
+            <span class="scene-env" id="env-name">no scene</span>
           </div>
-          <div class="card-actions">
-            <span class="chip chip-soft" id="obs-rate">— Hz</span>
-            <button class="icon-btn" id="viewer-reload" title="Reload viewer"><svg class="i"><use href="#i-refresh"/></svg></button>
-            <a class="icon-btn" id="viewer-open" target="_blank" title="Open viewer in a new tab"><svg class="i"><use href="#i-external"/></svg></a>
-            <button class="icon-btn" id="viewer-full" title="Fullscreen"><svg class="i"><use href="#i-expand"/></svg></button>
+          <div class="scene-actions">
+            <span class="scene-rate" id="obs-rate">— Hz</span>
+            <button class="scene-btn" id="viewer-reload" title="Reload viewer"><svg class="i"><use href="#i-refresh"/></svg></button>
+            <a class="scene-btn" id="viewer-open" target="_blank" title="Open viewer in a new tab"><svg class="i"><use href="#i-external"/></svg></a>
+            <button class="scene-btn" id="viewer-full" title="Fullscreen"><svg class="i"><use href="#i-expand"/></svg></button>
           </div>
-        </div>
+        </header>
         <div class="viewer" id="viewer">
           <iframe id="viewer-frame" title="3D scene" allow="fullscreen"></iframe>
           <div class="viewer-empty" id="viewer-empty">
@@ -166,201 +149,338 @@
         </div>
       </section>
 
-      <section class="card obs-card" id="rig-card" hidden>
-        <div class="card-head">
-          <h2><svg class="i"><use href="#i-camera"/></svg>Cameras <span class="muted small">— everything the rig delivers</span></h2>
-          <div class="card-actions">
-            <span class="muted small" id="rig-status"></span>
-            <label class="size-ctl" title="Image size"><svg class="i"><use href="#i-image"/></svg>
-              <input type="range" class="size-range" min="160" max="960" step="20" value="340" data-target="rig-cams"></label>
-          </div>
-        </div>
-        <div class="cams cams-wide" id="rig-cams"></div>
-      </section>
+      <div class="split split-y" data-split="bottom" title="Drag to resize · double-click to reset"></div>
 
-      <section class="card obs-card" id="obs-card">
-        <div class="card-head">
-          <h2><svg class="i"><use href="#i-eye"/></svg>Observation <span class="muted small">— exactly what the policy is fed</span></h2>
-          <div class="card-actions">
-            <span class="muted small" id="obs-missing"></span>
-            <label class="size-ctl" title="Image size"><svg class="i"><use href="#i-image"/></svg>
-              <input type="range" class="size-range" min="140" max="720" step="20" value="260" data-target="cams"></label>
-          </div>
-        </div>
-        <div class="cams" id="cams"><div class="empty">No image features in the active env.</div></div>
-        <div class="features" id="features"></div>
-      </section>
+      <section class="dock dock-tabs" id="dock-bottom" data-dock="bottom" aria-label="Bottom panel">
+        <nav class="tabbar" role="tablist"></nav>
+        <div class="dock-panels">
 
-      <section class="card console-card" id="console-card">
-        <div class="card-head">
-          <h2><svg class="i"><use href="#i-terminal"/></svg>Console</h2>
-          <div class="tabs" id="log-tabs"></div>
-          <div class="card-actions">
-            <label class="toggle small"><input type="checkbox" id="log-follow" checked><span></span>follow</label>
-            <button class="icon-btn sm" id="log-clear" title="Clear view"><svg class="i"><use href="#i-trash"/></svg></button>
-          </div>
-        </div>
-        <pre class="console" id="console"></pre>
-      </section>
-    </section>
-
-    <!-- ============ right rail ============ -->
-    <aside class="rail rail-right" data-col="right">
-      <section class="card" id="policy-card">
-        <div class="card-head">
-          <h2><svg class="i"><use href="#i-brain"/></svg>Policy</h2>
-          <button class="icon-btn" id="policies-refresh" title="Rescan the project's policies folder"><svg class="i"><use href="#i-refresh"/></svg></button>
-        </div>
-
-        <div class="policy-tools">
-          <div class="search">
-            <svg class="i"><use href="#i-search"/></svg>
-            <input id="policy-filter" placeholder="Filter policies…" autocomplete="off">
-          </div>
-          <div class="segmented" id="kind-filter">
-            <button data-kind="" class="active">All</button>
-            <button data-kind="vision">Vision</button>
-            <button data-kind="vision_language">V+L</button>
-          </div>
-        </div>
-        <div class="policy-list" id="policy-list"><div class="empty">No policies in this project.</div></div>
-
-        <div class="policy-active" id="policy-active" hidden>
-          <div class="pa-head">
-            <div>
-              <div class="pa-name" id="pa-name"></div>
-              <div class="pa-meta" id="pa-meta"></div>
+          <section class="panel" id="obs-card" data-title="Observation" data-icon="i-eye" data-dock="bottom">
+            <header class="panel-head">
+              <h2 class="panel-title">Observation</h2>
+              <span class="panel-sub">exactly what the policy is fed <span id="obs-missing"></span></span>
+              <div class="panel-actions">
+                <label class="size-ctl" title="Image size"><svg class="i"><use href="#i-image"/></svg>
+                  <input type="range" class="size-range" min="120" max="720" step="20" value="220" data-target="cams" aria-label="Image size"></label>
+              </div>
+            </header>
+            <div class="panel-body">
+              <div class="features" id="features"></div>
+              <div class="cams" id="cams"><div class="empty">No image features in the active env.</div></div>
             </div>
-            <span class="state-pill" id="pa-state"></span>
+          </section>
+
+          <section class="panel" id="rig-card" data-title="Cameras" data-icon="i-camera" data-dock="bottom" hidden>
+            <header class="panel-head">
+              <h2 class="panel-title">Cameras</h2>
+              <span class="panel-sub">everything the rig delivers <span id="rig-status"></span></span>
+              <div class="panel-actions">
+                <label class="size-ctl" title="Image size"><svg class="i"><use href="#i-image"/></svg>
+                  <input type="range" class="size-range" min="160" max="960" step="20" value="320" data-target="rig-cams" aria-label="Image size"></label>
+              </div>
+            </header>
+            <div class="panel-body">
+              <div class="cams cams-wide" id="rig-cams"></div>
+            </div>
+          </section>
+
+          <section class="panel" id="console-card" data-title="Console" data-icon="i-terminal" data-dock="bottom">
+            <header class="panel-head">
+              <h2 class="panel-title">Console</h2>
+              <div class="log-tabs" id="log-tabs" role="tablist" aria-label="Component logs"></div>
+              <div class="panel-actions">
+                <label class="switch sm" title="Keep scrolling to the newest line"><input type="checkbox" id="log-follow" checked><span></span>Follow</label>
+                <button class="icon-btn" id="log-clear" title="Clear view"><svg class="i"><use href="#i-trash"/></svg></button>
+              </div>
+            </header>
+            <div class="panel-body">
+              <pre class="console" id="console"></pre>
+            </div>
+          </section>
+
+        </div>
+      </section>
+    </main>
+
+    <div class="split split-x" data-split="inspector" title="Drag to resize · double-click to reset"></div>
+
+    <!-- ---------------------------------------------------- inspector (tabbed panels) -->
+    <aside class="dock dock-tabs" id="dock-inspector" data-dock="inspector" aria-label="Inspector">
+      <nav class="tabbar" role="tablist"></nav>
+      <div class="dock-panels">
+
+        <!-- ======== Policy -->
+        <section class="panel" id="policy-card" data-title="Policy" data-icon="i-brain" data-dock="inspector">
+          <header class="panel-head">
+            <h2 class="panel-title">Policy</h2>
+            <span class="panel-sub" id="policy-sub"></span>
+            <div class="panel-actions">
+              <button class="icon-btn" id="policies-refresh" title="Rescan the project's policies folder"><svg class="i"><use href="#i-refresh"/></svg></button>
+            </div>
+          </header>
+          <div class="panel-body">
+            <div class="active-card" id="policy-active" hidden>
+              <div class="pa-head">
+                <div class="pa-text">
+                  <div class="pa-name" id="pa-name"></div>
+                  <div class="pa-meta" id="pa-meta"></div>
+                </div>
+                <span class="pill" id="pa-state"></span>
+              </div>
+              <div class="queue" title="Action queue · the tick marks the refill threshold">
+                <div class="queue-bar"><div id="queue-fill"></div><div id="queue-threshold"></div></div>
+              </div>
+              <div class="stats" id="pa-stats"></div>
+              <div class="prompt" id="prompt-box">
+                <textarea id="prompt" rows="2" placeholder="Describe the task…" aria-label="Prompt"></textarea>
+                <div class="chips" id="prompt-chips"></div>
+              </div>
+              <div class="btn-row">
+                <button class="btn btn-lg btn-go" id="run-btn"><svg class="i"><use href="#i-play"/></svg>Run</button>
+                <button class="btn btn-lg btn-tinted-red" id="stop-btn" hidden><svg class="i"><use href="#i-stop-fill"/></svg>Stop policy</button>
+                <button class="btn btn-lg btn-secondary btn-square" id="home-btn" title="Send the home pose" aria-label="Home"><svg class="i"><use href="#i-home"/></svg></button>
+              </div>
+              <button class="btn-link tint-red" id="unload-btn">Unload policy</button>
+            </div>
+
+            <div class="filter-row">
+              <div class="search">
+                <svg class="i"><use href="#i-search"/></svg>
+                <input id="policy-filter" placeholder="Search" autocomplete="off" aria-label="Filter policies">
+              </div>
+              <div class="segmented" id="kind-filter" role="tablist" aria-label="Policy kind">
+                <button data-kind="" class="active">All</button>
+                <button data-kind="vision">Vision</button>
+                <button data-kind="vision_language" title="Vision + Language">V+L</button>
+              </div>
+            </div>
+            <div class="group group-select" id="policy-list"><div class="empty">No policies in this project.</div></div>
+            <button class="btn btn-lg btn-primary btn-block" id="load-btn" disabled><svg class="i"><use href="#i-download"/></svg>Load policy</button>
+            <p class="footnote center">Double-click a policy to load it.</p>
           </div>
-          <div class="queue">
-            <div class="queue-bar"><div id="queue-fill"></div><div id="queue-threshold"></div></div>
-            <div class="queue-stats" id="pa-stats"></div>
+        </section>
+
+        <!-- ======== Data collection -->
+        <section class="panel" id="collect-card" data-title="Data collection" data-tab="Record" data-icon="i-record" data-dock="inspector">
+          <header class="panel-head">
+            <h2 class="panel-title">Data collection</h2>
+            <div class="panel-actions"><span class="badge" id="collect-kind">Demo</span></div>
+          </header>
+          <div class="panel-body">
+            <div class="recorder">
+              <button class="rec-btn" id="rec-btn" title="Start / stop recording" aria-label="Start / stop recording">
+                <span class="rec-ring"></span><span class="rec-core"></span>
+              </button>
+              <div class="rec-info">
+                <div class="rec-time" id="rec-time">00:00</div>
+                <div class="rec-sub" id="rec-sub">Ready</div>
+              </div>
+              <button class="btn btn-sm btn-plain tint-red" id="discard-btn" title="Delete the last recorded demo"><svg class="i"><use href="#i-trash"/></svg>Discard last</button>
+            </div>
+
+            <div class="form">
+              <label class="form-row"><span>Dataset</span>
+                <input id="dataset" list="dataset-list" placeholder="e.g. coffee" autocomplete="off"></label>
+              <datalist id="dataset-list"></datalist>
+              <label class="form-row"><span>Task</span>
+                <input id="task" list="task-list" placeholder="e.g. place-cup" autocomplete="off"></label>
+              <datalist id="task-list"></datalist>
+              <label class="form-row" title="Stored with every episode"><span>Instruction</span>
+                <input id="instruction" placeholder="Pick up the cup and place it…" autocomplete="off"></label>
+              <label class="form-row"><span>Operator</span>
+                <input id="operator" placeholder="Your name" autocomplete="off"></label>
+            </div>
+            <p class="footnote" id="ds-count"></p>
+
+            <div class="section-label">This session</div>
+            <div class="group" id="episodes"></div>
           </div>
-          <div class="prompt" id="prompt-box">
-            <label class="field">
-              <span>Prompt</span>
-              <textarea id="prompt" rows="2" placeholder="Describe the task…"></textarea>
+        </section>
+
+        <!-- ======== Objects -->
+        <section class="panel" id="objects-card" data-title="Objects" data-icon="i-cube" data-dock="inspector">
+          <header class="panel-head">
+            <h2 class="panel-title">Objects</h2>
+            <span class="panel-sub" id="objects-sub"></span>
+          </header>
+          <div class="panel-body">
+            <div class="group">
+              <div id="obj-list"></div>
+              <form class="row obj-add" id="obj-add-form">
+                <div class="row-icon plain"><svg class="i"><use href="#i-plus"/></svg></div>
+                <input id="obj-new" placeholder="Add object to track, e.g. white mug" autocomplete="off" spellcheck="false" aria-label="New object">
+                <button class="btn btn-sm btn-secondary" type="submit">Add</button>
+              </form>
+            </div>
+
+            <div class="btn-row">
+              <button class="btn btn-lg btn-primary" id="obj-scan"><svg class="i"><use href="#i-scan"/></svg><span id="obj-scan-text">Scan &amp; estimate poses</span></button>
+              <button class="btn btn-lg btn-primary" id="obj-capture" hidden><svg class="i"><use href="#i-camera"/></svg><span id="obj-capture-text">Capture view</span></button>
+              <button class="btn btn-lg btn-secondary" id="obj-finish" hidden>Finish</button>
+              <button class="btn btn-lg btn-tinted-red" id="obj-stop" hidden><svg class="i"><use href="#i-stop-fill"/></svg>Stop</button>
+            </div>
+            <label class="switch-row" id="obj-auto-label" title="The arms move on their own around the objects (else you move them and capture)">
+              <span><b>Automatic scan</b><small>The arms move on their own instead of you</small></span>
+              <span class="switch"><input type="checkbox" id="obj-auto"><span></span></span>
             </label>
-            <div class="chips" id="prompt-chips"></div>
+            <div class="log-box" id="obj-progress" hidden></div>
+
+            <details class="help">
+              <summary><svg class="i"><use href="#i-info"/></svg>How scanning works</summary>
+              <p>Each name is the segmenter's text prompt. Objects without a mesh: <b>Scan</b>, then move the wrist cameras
+                (teleop or by hand) to views of the objects from all sides, <b>Capture view</b> at each, <b>Finish</b>: a mesh per
+                object, tracking starts at the scanned poses (Point cloud and Object poses start by themselves).
+                <i>Automatic</i>: the arms move on their own instead. Objects with a mesh are not scanned again; the tracking
+                finds them (<svg class="i inline"><use href="#i-refresh"/></svg> scans one again).</p>
+            </details>
           </div>
-          <div class="btn-row">
-            <button class="btn btn-go" id="run-btn"><svg class="i"><use href="#i-play"/></svg>Run</button>
-            <button class="btn btn-stop" id="stop-btn"><svg class="i"><use href="#i-stop"/></svg>Stop</button>
-            <button class="btn btn-soft" id="home-btn" title="Send the home pose"><svg class="i"><use href="#i-home"/></svg></button>
+        </section>
+
+        <!-- ======== Camera calibration -->
+        <section class="panel" id="calib-card" data-title="Camera calibration" data-tab="Calibrate" data-icon="i-target" data-dock="inspector">
+          <header class="panel-head">
+            <h2 class="panel-title">Camera calibration</h2>
+            <div class="panel-actions">
+              <label class="switch sm" title="Board detection (subscribes the camera images while on)">
+                <input type="checkbox" id="calib-watch"><span></span>Board</label>
+            </div>
+          </header>
+          <div class="panel-body">
+            <div class="section-label">Board visibility</div>
+            <div class="chip-row" id="calib-vis"></div>
+
+            <div class="section-label">Arms</div>
+            <div class="chip-row" id="calib-arms"></div>
+
+            <div class="btn-row">
+              <button class="btn btn-lg btn-primary" id="calib-start"><svg class="i"><use href="#i-target"/></svg>Calibrate</button>
+              <button class="btn btn-lg btn-secondary" id="calib-add" disabled><svg class="i"><use href="#i-plus"/></svg>Add placement</button>
+            </div>
+
+            <details class="help">
+              <summary><svg class="i"><use href="#i-info"/></svg>How calibration works</summary>
+              <p>Board lying still on the table; bring each arm (teleop) to a pose where its wrist camera sees it. The arm then
+                probes and drives to 8 views around the board by itself. Then move the board to another spot the middle camera
+                sees and <b>Add placement</b>: 2–3 placements spread over the workspace fit it far better than one. With the
+                point cloud running, the clouds fine-tune the result.</p>
+            </details>
+
+            <div class="log-box" id="calib-progress" hidden></div>
+            <div class="result" id="calib-result" hidden></div>
+            <div class="inline-form" id="calib-save-row" hidden>
+              <input id="calib-name" placeholder="Name, e.g. holders_v2" spellcheck="false" aria-label="Calibration name">
+              <button class="btn btn-secondary" id="calib-save"><svg class="i"><use href="#i-download"/></svg>Save</button>
+            </div>
+
+            <div class="section-label">Saved calibrations</div>
+            <div class="inline-form">
+              <div class="select"><select id="calib-saved" aria-label="Saved calibrations"></select></div>
+              <button class="btn btn-secondary" id="calib-apply" title="Write it into the robot configs and the project's camera poses">Apply</button>
+            </div>
+            <button class="btn btn-tinted btn-block" id="calib-restart" hidden><svg class="i"><use href="#i-refresh"/></svg>Restart robots to load it</button>
           </div>
-          <button class="link-btn" id="unload-btn">Unload policy</button>
-        </div>
-        <button class="btn btn-primary btn-block" id="load-btn" disabled><svg class="i"><use href="#i-download"/></svg>Load policy</button>
-      </section>
+        </section>
 
-      <section class="card" id="objects-card">
-        <div class="card-head">
-          <h2><svg class="i"><use href="#i-cube"/></svg>Objects</h2>
-          <span class="muted small" id="objects-sub"></span>
-        </div>
-        <div class="obj-list" id="obj-list"></div>
-        <form class="obj-add" id="obj-add-form">
-          <input id="obj-new" placeholder="Object to track, e.g. white mug" autocomplete="off" spellcheck="false">
-          <button class="btn btn-soft" type="submit">Add</button>
-        </form>
-        <p class="muted small calib-hint">Each name is the segmenter's text prompt. Objects without a mesh: <b>Scan</b>, then move the
-          wrist cameras (teleop or by hand) to views of the objects from all sides, <b>Capture view</b> at each, <b>Finish</b>: a mesh
-          per object, tracking starts at the scanned poses (Point cloud and Object poses start by themselves). <i>Auto</i>: the arms move
-          on their own instead. Objects with a mesh are not scanned again; the tracking finds them (&#x21bb; scans one again).</p>
-        <div class="btn-row">
-          <button class="btn btn-primary" id="obj-scan"><svg class="i"><use href="#i-target"/></svg><span id="obj-scan-text">Scan &amp; estimate poses</span></button>
-          <label class="toggle small" id="obj-auto-label" title="The arms move on their own around the objects (else you move them and capture)">
-            <input type="checkbox" id="obj-auto"><span></span>auto</label>
-          <button class="btn btn-primary" id="obj-capture" hidden><svg class="i"><use href="#i-target"/></svg><span id="obj-capture-text">Capture view</span></button>
-          <button class="btn btn-soft" id="obj-finish" hidden>Finish</button>
-          <button class="btn btn-stop" id="obj-stop" hidden><svg class="i"><use href="#i-stop"/></svg>Stop</button>
-        </div>
-        <div class="calib-progress" id="obj-progress" hidden></div>
-      </section>
+        <!-- ======== Cluster -->
+        <section class="panel" id="cluster-card" data-title="Cluster" data-icon="i-cloud" data-dock="inspector">
+          <header class="panel-head">
+            <h2 class="panel-title">Cluster</h2>
+            <span class="panel-sub" id="cluster-host"></span>
+          </header>
+          <div class="panel-body">
+            <div class="section-label">Copy &amp; convert</div>
+            <div class="form">
+              <div class="form-row"><span>Dataset</span><b class="form-value" id="sync-target">—</b></div>
+              <label class="form-row"><span>Conversion</span>
+                <div class="select"><select id="convert-config" aria-label="Conversion config"></select></div></label>
+            </div>
+            <div class="btn-row">
+              <button class="btn btn-lg btn-secondary" id="sync-only"><svg class="i"><use href="#i-upload"/></svg>Copy</button>
+              <button class="btn btn-lg btn-primary" id="sync-convert"><svg class="i"><use href="#i-sparkles"/></svg>Copy + convert</button>
+            </div>
 
-      <section class="card" id="collect-card">
-        <div class="card-head">
-          <h2><svg class="i"><use href="#i-database"/></svg>Data collection</h2>
-          <span class="badge" id="collect-kind">Demo</span>
-        </div>
+            <div class="section-label">Training</div>
+            <div class="form">
+              <label class="form-row"><span>Config</span>
+                <div class="select"><select id="train-config" aria-label="Training config"></select></div></label>
+            </div>
+            <button class="btn btn-lg btn-primary btn-block" id="train-btn"><svg class="i"><use href="#i-rocket"/></svg>Start training</button>
 
-        <div class="grid-2">
-          <label class="field">
-            <span>Dataset</span>
-            <input id="dataset" list="dataset-list" placeholder="e.g. coffee" autocomplete="off">
-            <datalist id="dataset-list"></datalist>
-          </label>
-          <label class="field">
-            <span>Task</span>
-            <input id="task" list="task-list" placeholder="e.g. place-cup" autocomplete="off">
-            <datalist id="task-list"></datalist>
-          </label>
-        </div>
-        <label class="field">
-          <span>Instruction <em class="muted">stored with every episode</em></span>
-          <input id="instruction" placeholder="Pick up the cup and place it under the coffee machine." autocomplete="off">
-        </label>
-        <label class="field">
-          <span>Operator</span>
-          <input id="operator" placeholder="Your name" autocomplete="off">
-        </label>
-
-        <div class="record">
-          <button class="rec-btn" id="rec-btn" title="Start / stop recording">
-            <span class="rec-ring"></span><span class="rec-core"></span>
-          </button>
-          <div class="rec-info">
-            <div class="rec-time" id="rec-time">00:00</div>
-            <div class="rec-sub" id="rec-sub">Ready</div>
+            <div class="section-label with-action">
+              <span>Jobs</span>
+              <button class="icon-btn" id="jobs-refresh" title="Refresh SLURM states"><svg class="i"><use href="#i-refresh"/></svg></button>
+            </div>
+            <div class="group" id="jobs"><div class="empty">No cluster jobs yet.</div></div>
           </div>
-          <button class="btn btn-soft danger-text" id="discard-btn" title="Delete the last recorded demo"><svg class="i"><use href="#i-trash"/></svg>Discard last</button>
-        </div>
-        <div class="ds-count" id="ds-count"></div>
-        <div class="episodes" id="episodes"></div>
-      </section>
+        </section>
+
+      </div>
     </aside>
-  </main>
+  </div>
 
-  <div class="toasts" id="toasts"></div>
+  <div class="toasts" id="toasts" aria-live="polite"></div>
 
-  <!-- icon sprite (lucide-style strokes) -->
+  <!-- confirmation sheet (replaces window.confirm) -->
+  <dialog class="sheet" id="sheet">
+    <form method="dialog">
+      <div class="sheet-icon" id="sheet-icon"><svg class="i"><use href="#i-alert"/></svg></div>
+      <h3 id="sheet-title"></h3>
+      <div class="sheet-body" id="sheet-body"></div>
+      <div class="sheet-actions">
+        <button class="btn btn-lg btn-secondary" value="cancel" id="sheet-cancel">Cancel</button>
+        <button class="btn btn-lg btn-primary" value="ok" id="sheet-ok">OK</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- icon sprite (SF Symbols-like strokes) -->
   <svg width="0" height="0" style="position:absolute" aria-hidden="true">
     <defs>
       <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
-      <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></symbol>
-      <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
-      <symbol id="i-layers" viewBox="0 0 24 24"><path d="m12 2 10 5-10 5L2 7z"/><path d="m2 17 10 5 10-5M2 12l10 5 10-5"/></symbol>
+      <symbol id="i-sidebar-left" viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="15" rx="3"/><path d="M9.5 4.5v15M5.8 8.5h1.4M5.8 11.5h1.4"/></symbol>
+      <symbol id="i-sidebar-right" viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="15" rx="3"/><path d="M14.5 4.5v15M16.8 8.5h1.4M16.8 11.5h1.4"/></symbol>
+      <symbol id="i-panel-bottom" viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="15" rx="3"/><path d="M3 14h18"/></symbol>
+      <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5.5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="18.5" cy="12" r="1.3"/></symbol>
+      <symbol id="i-layers" viewBox="0 0 24 24"><path d="m12 3 9 4.5-9 4.5-9-4.5z"/><path d="m3 16.5 9 4.5 9-4.5M3 12l9 4.5 9-4.5"/></symbol>
       <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></symbol>
-      <symbol id="i-points" viewBox="0 0 24 24"><circle cx="6" cy="15" r="1.4"/><circle cx="10" cy="9" r="1.4"/><circle cx="14" cy="16" r="1.4"/><circle cx="18" cy="10" r="1.4"/><circle cx="12" cy="4.5" r="1.4"/><circle cx="7" cy="20" r="1.4"/><circle cx="17" cy="20" r="1.4"/><circle cx="20" cy="15" r="1.4"/><circle cx="4" cy="9" r="1.4"/></symbol>
+      <symbol id="i-points" viewBox="0 0 24 24"><circle cx="6" cy="15" r="1.3"/><circle cx="10" cy="9" r="1.3"/><circle cx="14" cy="16" r="1.3"/><circle cx="18" cy="10" r="1.3"/><circle cx="12" cy="4.5" r="1.3"/><circle cx="7" cy="20" r="1.3"/><circle cx="17" cy="20" r="1.3"/><circle cx="20" cy="15" r="1.3"/><circle cx="4" cy="9" r="1.3"/></symbol>
       <symbol id="i-cloud" viewBox="0 0 24 24"><path d="M17.5 19a4.5 4.5 0 1 0-1.4-8.8A6 6 0 0 0 4.3 12 3.5 3.5 0 0 0 6.5 19z"/></symbol>
-      <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5M4 20h16"/></symbol>
-      <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v12M7 11l5 5 5-5M4 20h16"/></symbol>
+      <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 15V4M7.5 8.5 12 4l4.5 4.5M5 20h14"/></symbol>
+      <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 20h14"/></symbol>
       <symbol id="i-sparkles" viewBox="0 0 24 24"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/><path d="M19 15l.8 2.2 2.2.8-2.2.8L19 21l-.8-2.2-2.2-.8 2.2-.8z"/></symbol>
       <symbol id="i-rocket" viewBox="0 0 24 24"><path d="M5 15c-1.5 1.3-2 5-2 5s3.7-.5 5-2c.7-.8.7-2.1-.1-2.9a2.1 2.1 0 0 0-2.9-.1z"/><path d="M12 15l-3-3a22 22 0 0 1 2-4A13 13 0 0 1 22 2c0 2.7-.8 7.5-6 11a22 22 0 0 1-4 2z"/><path d="M9 12H4s.5-3 2-4c1.6-1.1 5 0 5 0M12 15v5s3-.5 4-2c1.1-1.6 0-5 0-5"/></symbol>
-      <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M21 12a9 9 0 0 1-15.5 6.2L3 16M3 12a9 9 0 0 1 15.5-6.2L21 8"/><path d="M21 3v5h-5M3 21v-5h5"/></symbol>
-      <symbol id="i-cube" viewBox="0 0 24 24"><path d="m21 16-9 5-9-5V8l9-5 9 5z"/><path d="m3.3 7 8.7 5 8.7-5M12 22V12"/></symbol>
-      <symbol id="i-external" viewBox="0 0 24 24"><path d="M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></symbol>
-      <symbol id="i-expand" viewBox="0 0 24 24"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></symbol>
-      <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></symbol>
-      <symbol id="i-terminal" viewBox="0 0 24 24"><path d="m4 17 6-5-6-5M12 19h8"/></symbol>
-      <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6"/></symbol>
-      <symbol id="i-brain" viewBox="0 0 24 24"><path d="M9.5 2A2.5 2.5 0 0 0 7 4.5v.2A3 3 0 0 0 4.3 9a3 3 0 0 0 .3 5.3A3 3 0 0 0 7 19.5 2.5 2.5 0 0 0 12 20V4.5A2.5 2.5 0 0 0 9.5 2zM14.5 2A2.5 2.5 0 0 1 17 4.5v.2A3 3 0 0 1 19.7 9a3 3 0 0 1-.3 5.3 3 3 0 0 1-2.4 5.2A2.5 2.5 0 0 1 12 20"/></symbol>
-      <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
-      <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4v16l13-8z"/></symbol>
-      <symbol id="i-target" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 12h16M12 4v16"/><rect x="6.5" y="6.5" width="3" height="3"/><rect x="14.5" y="14.5" width="3" height="3"/></symbol>
-      <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></symbol>
-      <symbol id="i-home" viewBox="0 0 24 24"><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></symbol>
-      <symbol id="i-database" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></symbol>
+      <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 12a8 8 0 0 1-14 5.3L4 15M4 12a8 8 0 0 1 14-5.3L20 9"/><path d="M20 4v5h-5M4 20v-5h5"/></symbol>
+      <symbol id="i-cube" viewBox="0 0 24 24"><path d="m20.5 16-8.5 4.8L3.5 16V8L12 3.2 20.5 8z"/><path d="m3.8 7.6 8.2 4.6 8.2-4.6M12 20.8v-8.6"/></symbol>
+      <symbol id="i-external" viewBox="0 0 24 24"><path d="M14 4h6v6M10 14 20 4M18 13.5V18a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4.5"/></symbol>
+      <symbol id="i-expand" viewBox="0 0 24 24"><path d="M15 4h5v5M9 20H4v-5M20 4l-6.5 6.5M4 20l6.5-6.5"/></symbol>
+      <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.5 12s3.5-6.5 9.5-6.5 9.5 6.5 9.5 6.5-3.5 6.5-9.5 6.5S2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/></symbol>
+      <symbol id="i-terminal" viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="15" rx="3"/><path d="m7 10 3 2.5L7 15M12.5 15H17"/></symbol>
+      <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 6.5h16M9 6.5V4.5h6v2M18.5 6.5l-.9 12.6a1.5 1.5 0 0 1-1.5 1.4H7.9a1.5 1.5 0 0 1-1.5-1.4L5.5 6.5M10 10.5v6M14 10.5v6"/></symbol>
+      <symbol id="i-brain" viewBox="0 0 24 24"><path d="M9.5 2.5A2.5 2.5 0 0 0 7 5v.2A3 3 0 0 0 4.3 9.3a3 3 0 0 0 .3 5.3A3 3 0 0 0 7 19.7 2.5 2.5 0 0 0 12 20V5a2.5 2.5 0 0 0-2.5-2.5zM14.5 2.5A2.5 2.5 0 0 1 17 5v.2a3 3 0 0 1 2.7 4.1 3 3 0 0 1-.3 5.3 3 3 0 0 1-2.4 5.1A2.5 2.5 0 0 1 12 20"/></symbol>
+      <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></symbol>
+      <symbol id="i-play" viewBox="0 0 24 24"><path d="M7.5 5.2v13.6a.8.8 0 0 0 1.2.7l11-6.8a.8.8 0 0 0 0-1.4l-11-6.8a.8.8 0 0 0-1.2.7z" fill="currentColor"/></symbol>
+      <symbol id="i-stop-fill" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2.5" fill="currentColor"/></symbol>
+      <symbol id="i-hand" viewBox="0 0 24 24"><path d="M18 11V6.5a1.5 1.5 0 0 0-3 0V11M15 10.5V4.5a1.5 1.5 0 0 0-3 0v6M12 10.5V5.5a1.5 1.5 0 0 0-3 0V13"/><path d="M18 8.5a1.5 1.5 0 0 1 3 0V14a7 7 0 0 1-7 7h-1.2a7 7 0 0 1-5.3-2.4L4 15.7a1.6 1.6 0 0 1 2.3-2.2L9 15.5"/></symbol>
+      <symbol id="i-target" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2.5"/><path d="M4 12h16M12 4v16"/><rect x="6.5" y="6.5" width="3" height="3"/><rect x="14.5" y="14.5" width="3" height="3"/></symbol>
+      <symbol id="i-scan" viewBox="0 0 24 24"><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2"/><path d="m16 9.5-4-2.2-4 2.2v5l4 2.2 4-2.2zM8.2 9.6 12 11.8l3.8-2.2M12 11.8v4.8"/></symbol>
+      <symbol id="i-home" viewBox="0 0 24 24"><path d="M4 10.2 12 4l8 6.2V19a1 1 0 0 1-1 1h-4.5v-5.5h-5V20H5a1 1 0 0 1-1-1z"/></symbol>
+      <symbol id="i-database" viewBox="0 0 24 24"><ellipse cx="12" cy="5.5" rx="7.5" ry="2.8"/><path d="M4.5 5.5v13c0 1.5 3.4 2.8 7.5 2.8s7.5-1.3 7.5-2.8v-13M4.5 12c0 1.5 3.4 2.8 7.5 2.8s7.5-1.3 7.5-2.8"/></symbol>
       <symbol id="i-robot" viewBox="0 0 24 24"><path d="M4 20h8M8 20v-4l3-6 5 3M11 10 8 6l3-3 3 3"/><circle cx="16" cy="13" r="2"/><path d="m18 14 3 3"/></symbol>
-      <symbol id="i-camera" viewBox="0 0 24 24"><path d="M4 7h3l2-3h6l2 3h3a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1z"/><circle cx="12" cy="13" r="4"/></symbol>
-      <symbol id="i-gamepad" viewBox="0 0 24 24"><path d="M6 12h4M8 10v4M15 13h.01M18 11h.01"/><rect x="2" y="6" width="20" height="12" rx="6"/></symbol>
-      <symbol id="i-record" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/></symbol>
-      <symbol id="i-server" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="8" rx="2"/><rect x="3" y="13" width="18" height="8" rx="2"/><path d="M7 7h.01M7 17h.01"/></symbol>
+      <symbol id="i-camera" viewBox="0 0 24 24"><path d="M4.5 7.5h2.8l1.8-2.5h5.8l1.8 2.5h2.8A1.5 1.5 0 0 1 21 9v9a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18V9a1.5 1.5 0 0 1 1.5-1.5z"/><circle cx="12" cy="13" r="3.5"/></symbol>
+      <symbol id="i-gamepad" viewBox="0 0 24 24"><path d="M6.5 12h4M8.5 10v4M15 13h.01M18 11h.01"/><rect x="2.5" y="6.5" width="19" height="11" rx="5.5"/></symbol>
+      <symbol id="i-record" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="3.5" fill="currentColor"/></symbol>
+      <symbol id="i-server" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="17" height="7.5" rx="2"/><rect x="3.5" y="13" width="17" height="7.5" rx="2"/><path d="M7.5 7.2h.01M7.5 16.8h.01"/></symbol>
       <symbol id="i-box" viewBox="0 0 24 24"><path d="m21 8-9-5-9 5 9 5z"/><path d="M3 8v8l9 5 9-5V8M12 13v8"/></symbol>
-      <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 9"/></symbol>
-      <symbol id="i-layout" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18M9 12h12"/></symbol>
-      <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+      <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="15" rx="2.5"/><circle cx="9" cy="10" r="1.8"/><path d="m21 15.5-4.5-4.5L8 19.5"/></symbol>
+      <symbol id="i-layout" viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="15" rx="3"/><path d="M9 4.5v15M9 13h12"/></symbol>
+      <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m7 9.5 5 5 5-5"/></symbol>
+      <symbol id="i-chevron-right" viewBox="0 0 24 24"><path d="m9.5 7 5 5-5 5"/></symbol>
+      <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2.2"/><path d="M8.5 10.5V7.8a3.5 3.5 0 0 1 7 0v2.7"/></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="m5.5 12.5 4.2 4.2 8.8-9.4"/></symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5.5v13M5.5 12h13"/></symbol>
+      <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 11v5.5M12 7.8h.01"/></symbol>
+      <symbol id="i-alert" viewBox="0 0 24 24"><path d="M10.3 4.3 2.9 17.2A2 2 0 0 0 4.6 20h14.8a2 2 0 0 0 1.7-2.8L13.7 4.3a2 2 0 0 0-3.4 0z"/><path d="M12 9.5v4.5M12 17h.01"/></symbol>
+      <symbol id="i-motion" viewBox="0 0 24 24"><path d="M4 20h8M8 20v-4l3-6 5 3M11 10 8 6l3-3 3 3"/><circle cx="16" cy="13" r="2"/><path d="M19.5 4.5a6 6 0 0 1 0 6M17.5 6a3 3 0 0 1 0 3"/></symbol>
     </defs>
   </svg>
   <script type="module" src="/static/app.js"></script>

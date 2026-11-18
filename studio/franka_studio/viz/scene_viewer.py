@@ -29,7 +29,7 @@ from franka_studio.env import SceneEnv, StepRecord
 
 log = logging.getLogger(__name__)
 
-BRAND = (56, 189, 248)       # sky-400, matches the studio accent
+BRAND = (10, 132, 255)       # system blue, matches the studio accent
 UNCALIBRATED = (251, 191, 36)  # amber: camera drawn at a guessed / hand-placed pose
 # Where an uncalibrated static camera is drawn until it is placed: in front of the table,
 # looking at its centre (world frame: x forward from the robot bases, z up).
@@ -116,8 +116,12 @@ class SceneViewer:
         from viser.extras import ViserUrdf  # noqa: F401
 
         self.server = viser.ViserServer(host=host, port=port, label="Franka Studio · Scene", verbose=False)
-        self.server.gui.configure_theme(control_layout="collapsible", control_width="medium", dark_mode=True,
+        self.server.gui.configure_theme(control_width="medium", dark_mode=True,
                                         show_logo=False, show_share_button=False, brand_color=BRAND)
+        # Control panel docked right and collapsed to its rail: the scene gets the whole view, one click
+        # opens the panel. Both are replayed to every browser that connects later.
+        self.server.gui.main_panel.dock_right()
+        self.server.gui.main_panel.minimize()
         self.server.scene.set_up_direction("+z")
         cam = self.server.initial_camera
         cam.position, cam.look_at, cam.up = (1.9, -1.6, 1.3), (0.25, 0.0, 0.25), (0.0, 0.0, 1.0)
