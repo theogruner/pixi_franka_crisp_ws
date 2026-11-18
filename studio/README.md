@@ -36,6 +36,7 @@ plus a render function in `app.js`; it gets its tab, drag-and-drop and persisten
 | **Policy** | Lists the project's `policies/` folder (refresh rescans it), filter by name and by *Vision* / *Vision + Language*. Load → Run (prompt + suggestions for V+L policies) → Stop, Home, Unload. Queue fill, control rate and chunk rate are shown live. Space stops a running policy. |
 | **Data collection** | Dataset + task (the last ones are preselected), instruction, operator, one record button, **Discard last**. Recording is allowed whenever no policy is *running*; with a policy loaded the episode is tagged as **DAgger** (policy, checkpoint and prompt go into its metadata). |
 | **Cluster** | *Copy* (rsync `<dataset>/<task>` to the cluster) or *Copy + convert* (then runs the project's conversion command, e.g. `convert_batched.py` + the quantile fix via sbatch). *Start training* uploads a config from `train_configs/` and runs `train_cmd`. SLURM job ids are tracked. |
+| **Objects / Graph** | Detect named objects with SAM 3 on all cameras, fused in 3D, and their scene graph (Scene graph view, Graph tab); track their poses (scan, pose tracking). |
 | **Scene / Observation** | The active env, live: robot meshes from `robot_description` posed by the joint states, URDF frames, poses (targets, EE), point clouds, the observation images as camera frustums, and the exact images/state the policy gets (crops and resizes included). No rviz or image windows needed. |
 
 ## Architecture
@@ -141,6 +142,37 @@ homing, the calibration, scripts -- and the studio stops its own runner, calibra
 **Resume** releases it; the safety nodes first re-target the IK at the held pose, and the teleop has
 kept re-anchoring meanwhile, so nothing drives back to an old target. *Run policy* resumes by itself,
 *Home* and *Calibrate* refuse while stopped. The halt stays in the safety nodes if the studio dies.
+
+### Object detection and scene graph
+
+*Objects* → **Detect**: name the objects to look for (any words, e.g. *ceramic mug*, *plate*) and switch
+on **Find objects**. The *Object detection* component (`../pose_tracking` `detect_node`,
+`config/scene_graph.yaml`; it starts with the switch, and the Point cloud with it) runs SAM 3 on every
+camera's RGB-D, lifts each mask with its depth and joins the cameras' masks into 3D objects:
+
+* robust against SAM 3's mistakes: duplicate and overlapping masks cleaned per camera, depth edges and
+  the table (its height measured every moment) left out, only the object's own 3D cluster kept, pieces
+  of one thing joined; the robot is no object (capsules along the arms' TF frames, and its silhouette
+  in each image for a wrist camera's own fingers, whose stereo depth is wrong), nor what is outside the
+  workspace;
+* checked across cameras: what one camera finds while the others see that spot and do not is dropped;
+* tracked: an object keeps its id and colour, appears once two cameras or two moments agree and stays
+  4 s after it was last seen.
+
+**Scene graph** above the 3D view shows only the objects (their points in their colours, boxes,
+labels, lines between related ones) and, where the pose tracking has a pose of an object at that
+spot, its frame. The **Graph** tab draws them seen from above with their relations (*on*, *in*,
+*next to*, on the table) and lists each object with its score and how many cameras found it. While
+detection is off nothing runs on the GPU; the model is freed after 5 min. Masks per camera:
+`/scene_graph/debug/<camera>`.
+
+The pose tracking (*Object poses*) takes its masks from this node too (`masks_from: detection` in
+`config/pose_tracking.yaml`): one SAM 3 for both. Starting *Object poses* also starts *Object
+detection* and the *Point cloud* (`needs:` of a component in `config/studio.yaml`). The node then
+detects the tracked objects too, also while *Find objects* is off (the Graph shows only what you
+asked for). The live box of the Object poses modality shows, per object, the last mask check: IoU
+with the masks, and see-through (a camera sees the background where the model claims a surface:
+the model or the pose is wrong).
 
 ### Camera calibration
 
