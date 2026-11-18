@@ -1,0 +1,48 @@
+# Camera calibration (studio: Calibration card); apply it there or with
+# board_calibration.write_robot_values + the project's camera_poses.yaml.
+name: fixed_holder_1811
+created: '2026-11-18T16:35:20'
+values:
+  static:
+    zed_middle:
+      position: [-0.15423, 0.06022, 0.55335]
+      wxyz: [-0.29765, 0.642123, -0.63673, 0.306036]
+  robots:
+    franka_left: {cam_pos_x: '-0.028095', cam_pos_y: '-0.036216', cam_pos_z: '0.015250',
+      cam_roll: '-0.014637', cam_pitch: '-0.007382', cam_yaw: '0.011465', xyz: -0.053717
+        0.581092 -0.021120, rpy: -0.006101 -0.009224 0.023161}
+    franka_right: {cam_pos_x: '-0.024869', cam_pos_y: '-0.035439', cam_pos_z: '0.023223',
+      cam_roll: '-0.009554', cam_pitch: '-0.026188', cam_yaw: '-0.013569'}
+  notes: []
+weak: []
+cloud:
+  used: false
+  before:
+    zed_left_arm: {mm: 3.43, matched: 0.231}
+    zed_right_arm: {mm: 3.65, matched: 0.207}
+  after:
+    zed_left_arm: {mm: 2.8, matched: 0.237}
+    zed_right_arm: {mm: 2.82, matched: 0.21}
+  warnings: ['C:zed_right_arm would move 9 mm / 1.7 deg']
+  message: 'not applied, board and clouds disagree: C:zed_right_arm would move 9 mm
+    / 1.7 deg'
+placements: 4
+rms: {zed_left_arm: 1.217, zed_middle: 1.112, zed_right_arm: 3.36}
+rms_before: {zed_left_arm: 6.936, zed_middle: 4.806, zed_right_arm: 34.654}
+std:
+  B:0: {deg: 0.44, mm: 0.89}
+  B:1: {deg: 0.395, mm: 1.0}
+  B:2: {deg: 0.408, mm: 0.88}
+  B:3: {deg: 0.398, mm: 0.86}
+  M:zed_middle: {deg: 0.374, mm: 3.16}
+  C:zed_left_arm: {deg: 0.408, mm: 4.42}
+  C:zed_right_arm: {deg: 0.24, mm: 1.77}
+  D:zed_left_arm: {deg: 0.498, mm: 2.51}
+reference: franka_right
+solved_mounts: [zed_left_arm, zed_right_arm]
+solved_bases: [franka_left]
+captures: config/calibrations/captures_20261118_162331.json
+board: {dict: DICT_4X4_50, cols: 3, rows: 4, first_id: 0, marker: 0.0565, sep: 0.0055}
+mount_config:
+  franka_right: {rpy_ee: 0 0 2.356194490, camera_holder: short, cam_holder_yaw: '2.356194490'}
+  franka_left: {rpy_ee: 0 0 2.356194490, camera_holder: short, cam_holder_yaw: '2.356194490'}
