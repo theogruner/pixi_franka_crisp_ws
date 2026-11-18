@@ -76,6 +76,9 @@ def build_app(studio: Studio) -> web.Application:
         "objects/capture": (lambda: studio.objects_scan_command("capture"), []),   # manual scan
         "objects/finish": (lambda: studio.objects_scan_command("finish"), []),
         "objects/stop": (studio.halt, []),               # stopping a scan is a Stop, as for calibration
+        "detect/set": (studio.detect_set, ["prompts"]),
+        "detect/enable": (studio.detect_enable, ["on"]),
+        "view": (studio.view_mode, ["mode"]),
     }
 
     async def action(request: web.Request) -> web.Response:

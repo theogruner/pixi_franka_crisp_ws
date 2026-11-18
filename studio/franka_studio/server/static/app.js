@@ -129,7 +129,10 @@ function render(s) {
   renderCluster(s);
   renderCalibration(s);
   renderObjects(s);
+  renderDetect(s);
+  renderGraph(s);
   renderViewer(s);
+  renderViewMode(s);
   renderBadges(s);
   syncDocks();
   for (const e of s.events || []) if (e.t > PAGE_T0 - 1) toast(e.text, e.level);
@@ -173,6 +176,8 @@ function renderBadges(s) {
   set("policy-card", s.policy?.state === "running" ? "run" : s.loading ? "busy" : s.policy ? "ready" : "");
   set("calib-card", s.calibration?.state === "running" ? "busy" : "");
   set("objects-card", s.object_scan?.state === "running" ? "busy" : "");
+  const det = detectState(s.scene_graph || {})[0];
+  set("graph-card", det === "err" ? "err" : det === "warn" ? "warn" : det === "run" ? ((s.scene_graph.objects || []).length ? "run" : "busy") : det);
   set("console-card", failed ? "err" : "");
   set("stack-card", failed ? "err" : "");
   set("space-card", (s.modalities || []).some((m) => m.enabled && m.component && !m.component_up) ? "warn" : "");
@@ -378,13 +383,20 @@ function renderPoseTracking(s) {
   el.className = `live-box ${pt?.live ? "live" : "stale"}`;
   if (!pt || !pt.live) {
     const none = !(pt?.objects || []).length ? " — no <code>objects</code> in env.yaml" : "";
-    el.innerHTML = `<div class="live-head"><span class="dot"></span><span>${mod.component_up ? "Waiting for the pose tracking node…" : `Starting ${esc(mod.component)}… (needs the point cloud)`}${none}</span></div>`;
+    el.innerHTML = `<div class="live-head"><span class="dot"></span><span>${mod.component_up ? "Waiting for the pose tracking node…" : `Starting ${esc(mod.component)}… (with the point cloud and object detection)`}${none}</span></div>`;
     return;
   }
   const objs = (st.order || []).map((n) => [n, st.objects?.[n] || {}]);
-  el.innerHTML = `<div class="live-head"><span class="dot"></span><span>Object poses</span><b>${st.hz.toFixed(1)} Hz</b><span>${esc(st.camera)}</span>${st.seg_ms != null ? `<span class="muted">seg ${st.seg_ms.toFixed(0)} ms</span>` : ""}</div>
+  // masks from Object detection (one SAM 3 for both) or the node's own segmenter
+  const masks = st.masks?.from === "detection"
+    ? `<span class="muted" title="Masks from Object detection">masks ${st.masks.hz != null ? st.masks.hz.toFixed(1) : "—"} Hz</span>`
+    : st.seg_ms != null ? `<span class="muted">seg ${st.seg_ms.toFixed(0)} ms</span>` : "";
+  // per object: the last mask check (IoU with the masks, see-through: a camera sees past the model)
+  const check = (o) => (o.iou != null ? ` · IoU ${o.iou.toFixed(2)}` : "")
+    + (o.see_through != null ? ` · see-through ${o.see_through.toFixed(2)}` : "");
+  el.innerHTML = `<div class="live-head"><span class="dot"></span><span>Object poses</span><b>${st.hz.toFixed(1)} Hz</b><span>${esc(st.camera)}</span>${masks}</div>
     ${st.error ? `<div class="err">${esc(st.error)}</div>` : ""}
-    <div class="live-grid">${objs.map(([n, o]) => `<span>${esc(n)}</span><span>${esc(o.status || "—")}${o.iou != null ? ` · IoU ${o.iou.toFixed(2)}` : ""}</span>${o.message && o.status !== "tracking" ? `<span class="err">${esc(o.message)}</span>` : ""}`).join("")}</div>`;
+    <div class="live-grid">${objs.map(([n, o]) => `<span>${esc(n)}</span><span>${esc(o.status || "—")}${check(o)}</span>${o.message && o.status !== "tracking" ? `<span class="err">${esc(o.message)}</span>` : ""}`).join("")}</div>`;
 }
 
 // ---- objects (pose tracking targets, live scan)
@@ -463,6 +475,257 @@ function renderObjects(s) {
   if (!prog.hidden && changed("obj-prog", [scan.state, scan.phase, lines])) {
     prog.innerHTML = `<div class="phase ${esc(scan.state)}">${esc(running ? scan.phase : scan.state)}</div>${esc(lines.join("\n"))}`;
     prog.scrollTop = prog.scrollHeight;
+  }
+}
+
+// ---- detection & scene graph (Objects → Detect, Graph panel, Scene / Scene graph view)
+
+const rgb = (c) => `rgb(${(c || [142, 142, 147]).join(",")})`;
+const camName = (c) => String(c).replace(/^zed_/, "").replace(/_/g, " ");
+const REL_TEXT = { on: "on", in: "in", "next to": "next to", "on table": "on the table" };
+
+function detectState(sg) {
+  if (!sg.enabled) return ["", "Off"];
+  if (!sg.live) return ["busy", "Starting…"];
+  if (sg.error) return ["err", "Error"];
+  if (sg.state === "loading") return ["busy", "Loading model…"];
+  if (sg.state === "waiting for cameras") return ["warn", "No camera frames"];
+  if (sg.state === "running") return ["run", `${(sg.hz || 0).toFixed(1)} Hz`];
+  return ["busy", sg.state || "…"];
+}
+
+function detectPrompts() {
+  return ui.detPrompts ?? ui.status?.scene_graph?.prompts ?? [];
+}
+
+async function saveDetectPrompts(prompts) {
+  ui.detPrompts = prompts;              // shown at once; the studio's list replaces it with the next status
+  renderDetect(ui.status);
+  const r = await post("detect/set", { prompts });
+  ui.detPrompts = null;
+  if (r?.ok === false) renderDetect(ui.status);
+}
+
+async function setDetect(on) {
+  if (on && !detectPrompts().length) {
+    revealPanel("objects-card");
+    $("#det-new").focus();
+    toast("Name the objects to detect first.", "info", true);
+    return false;
+  }
+  const r = await post("detect/enable", { on });
+  return r?.ok !== false;
+}
+
+function renderDetect(s) {
+  if (!s) return;
+  const sg = s.scene_graph || {};
+  const prompts = detectPrompts();
+  const objs = sg.objects || [];
+  const [cls, text] = detectState(sg);
+  $("#det-state").textContent = sg.enabled ? text : "";
+  $("#det-state").className = `det-state ${cls}`;
+  if (document.activeElement !== $("#det-on")) $("#det-on").checked = !!sg.enabled;
+  $("#det-icon").className = `row-icon ${cls === "run" ? "on" : cls === "err" ? "err" : ""}`;
+  $("#det-sub").textContent = !sg.enabled ? (prompts.length ? `SAM 3 on all cameras · ${prompts.length} object${prompts.length > 1 ? "s" : ""}` : "Add the objects to look for below")
+    : sg.error ? sg.error
+    : cls === "run" ? `${objs.length} found · ${Math.round(sg.seg_ms || 0)} ms per moment`
+    : !sg.live ? "Starting the Object detection component…" : text;
+  $("#det-sub").classList.toggle("err", !!(sg.enabled && sg.error));
+
+  const box = $("#det-tokens");
+  const counts = {};
+  for (const o of objs) (counts[o.prompt] ||= []).push(o);
+  if (changed("det-tokens", [prompts, Object.entries(counts).map(([p, os]) => [p, os.length, os[0].color])])) {
+    box.querySelectorAll(".token").forEach((t) => t.remove());
+    const input = $("#det-new");
+    for (const p of prompts) {
+      const found = counts[p] || [];
+      const t = document.createElement("span");
+      t.className = `token${found.length ? " found" : ""}`;
+      t.dataset.prompt = p;
+      t.style.setProperty("--c", found.length ? rgb(found[0].color) : "var(--label-3)");
+      t.innerHTML = `<span class="dot"></span>${esc(p)}${found.length > 1 ? `<b>×${found.length}</b>` : ""}<button title="Remove" aria-label="Remove ${esc(p)}">${icon("i-x")}</button>`;
+      box.insertBefore(t, input);
+    }
+    input.placeholder = prompts.length ? "Add…" : "Add object, e.g. ceramic mug";
+  }
+  const cams = Object.entries(sg.enabled && sg.live ? sg.cameras || {} : {});
+  const camBox = $("#det-cams");
+  camBox.hidden = !cams.length;
+  if (cams.length && changed("det-cams", cams)) {
+    camBox.innerHTML = cams.map(([c, v]) => {
+      const n = Object.values(v.found || {}).reduce((a, b) => a + b, 0);
+      const title = v.age == null ? "no frame" : Object.entries(v.found || {}).map(([p, k]) => `${k} ${p}`).join(", ") || "nothing found";
+      return `<span class="chip ${v.age == null ? "warn" : n ? "ok" : ""}" title="${esc(camName(c))}: ${esc(title)}"><span class="dot"></span>${esc(camName(c))} · ${v.age == null ? "—" : n}</span>`;
+    }).join("");
+  }
+}
+
+function graphLayout(objs, rels, W, H, pad) {
+  // seen from above, robot at the bottom: screen x = -world y, screen y = -world x
+  const pts = objs.map((o) => ({ o, x: -o.box.center[1], y: -o.box.center[0] }));
+  const at = Object.fromEntries(pts.map((p) => [p.o.id, p]));
+  if (!pts.length) return pts;
+  const xs = pts.map((p) => p.x), ys = pts.map((p) => p.y);
+  const cx = (Math.min(...xs) + Math.max(...xs)) / 2, cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+  const span = Math.max(Math.max(...xs) - Math.min(...xs), (Math.max(...ys) - Math.min(...ys)) * (W / H), 0.25);
+  const k = (W - 2 * pad) / span;
+  for (const p of pts) { p.x = W / 2 + (p.x - cx) * k; p.y = H / 2 + (p.y - cy) * k; }
+  // a thing on / in another sits on top of it from above: drawn above it instead (a stack reads upwards)
+  for (const r of rels) {
+    const a = at[r.a], b = at[r.b];
+    if (a && b && (r.rel === "on" || r.rel === "in") && Math.hypot(a.x - b.x, a.y - b.y) < 50) { a.x = b.x; a.y = b.y - 56; }
+  }
+  for (let it = 0; it < 60; it++) {       // nodes apart, so labels stay readable
+    for (let i = 0; i < pts.length; i++) for (let j = i + 1; j < pts.length; j++) {
+      const a = pts[i], b = pts[j];
+      let dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy);
+      const min = Math.abs(dx) > Math.abs(dy) ? 84 : 50;   // labels are wide: more room side by side
+      if (d >= min) continue;
+      if (d < 1e-3) { dx = 1; dy = 0; d = 1; }
+      const push = (min - d) / 2;
+      a.x -= dx / d * push; a.y -= dy / d * push; b.x += dx / d * push; b.y += dy / d * push;
+    }
+    for (const p of pts) { p.x = Math.min(W - pad, Math.max(pad, p.x)); p.y = Math.min(H - 34, Math.max(26, p.y)); }
+  }
+  return pts;
+}
+
+function renderGraphSvg(objs, rels) {
+  const svg = $("#graph-svg");
+  const W = 320, H = 210, R = 8;
+  const pos = Object.fromEntries(graphLayout(objs, rels, W, H, 44).map((p) => [p.o.id, p]));
+  let edges = "", labels = "";
+  for (const r of rels) {
+    const a = pos[r.a], b = pos[r.b];
+    if (!a || !b) continue;
+    const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 1;
+    const x1 = a.x + dx / d * (R + 2), y1 = a.y + dy / d * (R + 2), x2 = b.x - dx / d * (R + 4), y2 = b.y - dy / d * (R + 4);
+    const directed = r.rel !== "next to";
+    edges += `<line class="edge${directed ? "" : " soft"}" data-a="${r.a}" data-b="${r.b}" x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}"${directed ? ' marker-end="url(#graph-arrow)"' : ""}/>`;
+    const w = r.rel.length * 5.6 + 10;
+    const vertical = Math.abs(dx) < Math.abs(dy) * 0.5;   // a stack: the label beside the line, not on the names
+    const mx = (a.x + b.x) / 2 + (vertical ? w / 2 + 5 : 0), my = (a.y + b.y) / 2 + (vertical ? 4 : 0);
+    labels += `<g class="edge-label" data-a="${r.a}" data-b="${r.b}"><rect x="${(mx - w / 2).toFixed(1)}" y="${(my - 8).toFixed(1)}" width="${w.toFixed(1)}" height="15" rx="7.5"/><text x="${mx.toFixed(1)}" y="${(my + 3.5).toFixed(1)}">${esc(r.rel)}</text></g>`;
+  }
+  const nodes = objs.map((o) => {
+    const p = pos[o.id];
+    const onTable = rels.some((r) => r.a === o.id && r.rel === "on table");
+    return `<g class="node${o.age > 0.8 ? " stale" : ""}" data-id="${o.id}" transform="translate(${p.x.toFixed(1)},${p.y.toFixed(1)})">
+      <title>${esc(o.label)} · score ${o.score.toFixed(2)} · ${o.cameras.length} camera${o.cameras.length === 1 ? "" : "s"}${o.pose ? " · frame from the pose tracking" : ""}</title>
+      ${onTable ? `<line class="table-mark" x1="-11" y1="${R + 4}" x2="11" y2="${R + 4}"/>` : ""}
+      ${o.pose ? `<circle class="pose-ring" r="${R + 3.5}" style="stroke:${rgb(o.color)}"/>` : ""}
+      <circle r="${R}" style="fill:${rgb(o.color)}"/>
+      <text y="${R + 17}">${esc(o.label)}</text></g>`;
+  }).join("");
+  svg.innerHTML = `<defs><marker id="graph-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1 9 5 1 9z"/></marker></defs>${edges}${labels}${nodes}`;
+}
+
+function relText(r, byId) {
+  return r.b === 0 ? "the table" : byId[r.b]?.label ?? "?";
+}
+
+function renderGraph(s) {
+  const sg = s.scene_graph || {};
+  const objs = (sg.objects || []).filter((o) => o.box?.center);
+  const rels = sg.relations || [];
+  const byId = Object.fromEntries(objs.map((o) => [o.id, o]));
+  const nRel = rels.filter((r) => r.b !== 0).length;
+  $("#graph-sub").textContent = sg.enabled ? `${objs.length} object${objs.length === 1 ? "" : "s"} · ${nRel} relation${nRel === 1 ? "" : "s"}` : "";
+  const empty = $("#graph-empty");
+  empty.hidden = !!objs.length;
+  if (!objs.length) {
+    const prompts = detectPrompts();
+    $("#graph-empty-text").textContent = !sg.enabled ? "Detection is off"
+      : !sg.live || sg.state === "loading" ? "Starting detection…"
+      : sg.error ? sg.error
+      : `Looking for ${prompts.join(", ")}…`;
+    $("#graph-detect-btn").hidden = !!sg.enabled;
+  }
+  // the layout only changes when objects move more than a few cm (no jitter)
+  const sig = [objs.map((o) => [o.id, o.label, o.color, o.box.center.slice(0, 2).map((v) => Math.round(v * 25)), !!o.pose, o.age > 0.8]),
+    rels.map((r) => [r.a, r.b, r.rel])];
+  if (changed("graph-svg", sig)) renderGraphSvg(objs, rels);
+  if (changed("graph-list", [objs.map((o) => [o.id, o.label, o.color, o.score.toFixed(2), o.cameras, o.missed, o.pose, o.box.size.map((v) => Math.round(v * 100)), o.age > 0.8]), rels])) {
+    $("#graph-objects").innerHTML = objs.length ? objs.map((o) => {
+      const where = rels.filter((r) => r.a === o.id && r.rel !== "next to").map((r) => `${REL_TEXT[r.rel] === "on the table" ? "on the table" : `${r.rel} ${relText(r, byId)}`}`);
+      const size = o.box.size.map((v) => Math.max(1, Math.round(v * 100))).join("×");
+      const total = o.cameras.length + (o.missed?.length || 0);
+      const cams = `<span class="${o.missed?.length ? "warn-text" : ""}" title="Found by ${esc(o.cameras.map(camName).join(", "))}${o.missed?.length ? `; missed by ${esc(o.missed.map(camName).join(", "))}, which see it` : ""}">${o.cameras.length}/${total} cam</span>`;
+      return `<div class="row graph-obj${o.age > 0.8 ? " stale" : ""}" data-id="${o.id}">
+        <span class="obj-dot" style="--c:${rgb(o.color)}"></span>
+        <div class="row-main">
+          <div class="row-title"><span>${esc(o.label)}</span>${o.pose ? `<span class="tag" title="Its frame comes from the pose tracking (${esc(o.pose)})">frame</span>` : ""}${o.age > 0.8 ? `<span class="tag">not seen ${o.age.toFixed(0)} s</span>` : ""}</div>
+          <div class="row-sub"><span>${o.score.toFixed(2)}</span>·${cams}${where.length ? `·<span class="txt">${esc(where.join(", "))}</span>` : ""}</div>
+        </div>
+        <span class="row-mono" title="Box (cm)">${size} cm</span></div>`;
+    }).join("") : `<div class="empty">No objects.</div>`;
+    const shown = rels.filter((r) => byId[r.a] && byId[r.b]);   // on the table: in the object rows
+    $("#graph-rels").innerHTML = shown.length ? shown.map((r) => `<div class="row graph-rel" data-a="${r.a}" data-b="${r.b}">
+        <span class="obj-dot" style="--c:${rgb(byId[r.a].color)}"></span><span>${esc(byId[r.a].label)}</span>
+        <span class="rel">${esc(r.rel === "on table" ? "on" : r.rel)}</span>
+        <span class="obj-dot" style="--c:${r.b === 0 ? "var(--label-3)" : rgb(byId[r.b].color)}"></span><span>${esc(relText(r, byId))}</span>
+        ${r.dist != null ? `<span class="row-mono">${Math.round(r.dist * 100)} cm</span>` : ""}</div>`).join("")
+      : `<div class="empty">${objs.length > 1 ? "The objects are apart." : "No relations."}</div>`;
+  }
+}
+
+function renderViewMode(s) {
+  const mode = s.viewer?.mode || "scene";
+  $("#view-seg").querySelectorAll("button").forEach((b) => b.classList.toggle("active", b.dataset.mode === mode));
+  $("#view-seg").hidden = !s.viewer?.enabled;
+  const sg = s.scene_graph || {};
+  const hint = $("#viewer-hint");
+  hint.hidden = mode !== "graph" || !!(sg.objects || []).length;
+  if (!hint.hidden) {
+    $("#viewer-hint-text").textContent = !sg.enabled ? "Scene graph: detection is off" : sg.error ? sg.error : "Looking for objects…";
+    $("#viewer-hint-btn").hidden = !!sg.enabled;
+  }
+}
+
+function highlightGraph(id, on) {
+  const svg = $("#graph-svg");
+  svg.classList.toggle("focus", on);
+  svg.querySelectorAll(".node").forEach((n) => n.classList.toggle("hl", on && n.dataset.id === String(id)));
+  svg.querySelectorAll(".edge, .edge-label").forEach((e) => e.classList.toggle("hl", on && (e.dataset.a === String(id) || e.dataset.b === String(id))));
+}
+
+function wireDetect() {
+  const input = $("#det-new");
+  const add = () => {
+    const parts = input.value.split(/[,;]/).map((p) => p.trim().replace(/\s+/g, " ")).filter(Boolean);
+    if (!parts.length) return;
+    const have = detectPrompts();
+    const next = [...have, ...parts.filter((p) => !have.some((h) => h.toLowerCase() === p.toLowerCase()))];
+    input.value = "";
+    if (next.length !== have.length) saveDetectPrompts(next);
+  };
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === ",") { e.preventDefault(); add(); }
+    else if (e.key === "Backspace" && !input.value && detectPrompts().length) saveDetectPrompts(detectPrompts().slice(0, -1));
+  });
+  input.addEventListener("blur", add);
+  $("#det-tokens").addEventListener("click", (e) => {
+    const btn = e.target.closest(".token button");
+    if (btn) saveDetectPrompts(detectPrompts().filter((p) => p !== btn.closest(".token").dataset.prompt));
+    else if (e.target === e.currentTarget) input.focus();
+  });
+  $("#det-on").onchange = async (e) => { if (!await setDetect(e.target.checked)) e.target.checked = false; };
+  const startDetect = () => setDetect(true);
+  $("#graph-detect-btn").onclick = startDetect;
+  $("#viewer-hint-btn").onclick = startDetect;
+  $("#view-seg").querySelectorAll("button").forEach((b) => (b.onclick = async () => {
+    $("#view-seg").querySelectorAll("button").forEach((x) => x.classList.toggle("active", x === b));
+    await post("view", { mode: b.dataset.mode });
+    if (b.dataset.mode === "graph") revealPanel("graph-card");
+  }));
+  for (const list of [$("#graph-objects"), $("#graph-rels")]) {
+    list.addEventListener("mouseover", (e) => {
+      const row = e.target.closest("[data-id], [data-a]");
+      if (row) highlightGraph(row.dataset.id ?? row.dataset.a, true);
+    });
+    list.addEventListener("mouseleave", () => highlightGraph(null, false));
   }
 }
 
@@ -766,7 +1029,7 @@ function viewerUrl(s) {
 }
 
 function renderViewer(s) {
-  if (!changed("viewer", s.viewer)) return;
+  if (!changed("viewer", { ...s.viewer, mode: undefined })) return;   // a new view mode is not a new viewer
   const frame = $("#viewer-frame");
   if (s.viewer.enabled) {
     const url = viewerUrl(s);
@@ -882,12 +1145,19 @@ function setView(key, on) {
 function wireLayout() {
   // restore: panels into their remembered docks (unknown / new panels stay in their default dock)
   const saved = store.get(LAYOUT_KEY);
+  const before = Object.fromEntries([...document.querySelectorAll(".panel")].map((p) => [p.id, p.previousElementSibling?.id]));
   for (const [name, ids] of Object.entries(saved?.docks || {})) {
     const dock = document.querySelector(`.dock[data-dock="${CSS.escape(name)}"]`);
     if (dock) for (const id of ids) {
       const p = document.getElementById(id);
       if (p?.classList.contains("panel")) panelBox(dock).appendChild(p);
     }
+  }
+  // a panel added since the layout was saved goes after the panel it follows in the page
+  const known = new Set(Object.values(saved?.docks || {}).flat());
+  if (saved) for (const p of document.querySelectorAll(".panel")) {
+    const prev = document.getElementById(before[p.id] || "");
+    if (!known.has(p.id) && prev?.classList.contains("panel")) prev.after(p);
   }
   layout.active = saved?.active || {};
   layout.collapsed = saved?.collapsed || [];
@@ -1243,6 +1513,7 @@ function wireSizes() {
 }
 
 wire();
+wireDetect();
 wireMenu();
 wireSizes();
 wireLayout();

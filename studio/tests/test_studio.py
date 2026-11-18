@@ -230,6 +230,29 @@ def test_components_of_an_earlier_studio_are_adopted_and_stoppable(tmp_path):
         os.killpg(pgid, 0)
 
 
+def test_a_component_starts_what_it_needs_first():
+    """Object poses needs Point cloud and Object detection (its masks): started first, once."""
+    import franka_studio.processes as processes
+
+    pm = ProcessManager()
+    pm.configure({"pointcloud": {"cmd": "sleep 60"},
+                  "scene_graph": {"cmd": "sleep 60", "needs": ["pointcloud"]},
+                  "pose_tracking": {"cmd": "sleep 60", "needs": ["pointcloud", "scene_graph"]}})
+    ok, msg = pm.start("pose_tracking")
+    try:
+        assert ok and "also started" in msg, msg
+        assert all(pm.get(n).alive for n in ("pointcloud", "scene_graph", "pose_tracking"))
+        ok, msg = pm.start("scene_graph")   # running: no second copy, nothing else started
+        assert not ok
+    finally:
+        old = processes.STOP_TIMEOUTS_S
+        processes.STOP_TIMEOUTS_S = (0.5, 0.5)
+        try:
+            pm.stop_all(wait=True)
+        finally:
+            processes.STOP_TIMEOUTS_S = old
+
+
 def test_unconfigured_component_refuses_to_start():
     pm = ProcessManager()
     pm.configure({"cams": {"cmd": None}})
@@ -505,3 +528,44 @@ def test_untracked_objects_are_hidden():
     assert link.untracked_poses() == {"object/box"}
     link._status_t = time.time() - 60
     assert link.untracked_poses() == {"object/mug", "object/box"}
+
+
+def test_detect_prompts_are_cleaned():
+    from franka_studio.scene_graph import MAX_PROMPTS, clean_prompts
+
+    assert clean_prompts(["  ceramic   mug ", "Plate", "plate", "", None]) == (["ceramic mug", "Plate"], "")
+    assert clean_prompts("cup, spoon;bowl") == (["cup", "spoon", "bowl"], "")
+    assert clean_prompts([f"o{i}" for i in range(MAX_PROMPTS + 1)])[1]
+    assert clean_prompts(["x" * 81])[1]
+
+
+def test_scene_graph_request_status_and_tracked_frames():
+    import json
+
+    from franka_studio.scene_graph import SceneGraphLink
+
+    sent = []
+
+    class Ros:
+        def subscribe(self, *a, **k):
+            pass
+
+        def publisher(self, *a, **k):
+            return type("P", (), {"publish": lambda self, m: sent.append(json.loads(m.data))})()
+
+    link = SceneGraphLink(Ros())
+    link.request(True, ["cup", "plate"])
+    assert sent[-1] == {"enabled": True, "prompts": ["cup", "plate"]}
+    assert link.graph() == {"objects": [], "relations": []}          # node not live
+    objects = [{"id": 1, "label": "cup", "box": {"center": [0.5, 0.1, 0.05], "size": [0.08, 0.08, 0.1], "yaw": 0}},
+               {"id": 2, "label": "plate", "box": {"center": [0.5, 0.1, 0.01], "size": [0.22, 0.22, 0.02], "yaw": 0}}]
+    status = {"enabled": True, "state": "running", "objects": objects, "relations": [{"a": 1, "b": 2, "rel": "on"}]}
+    link._on_status(type("M", (), {"data": json.dumps(status)})())
+    # one tracked pose near both: it goes to the nearer box centre only; a far one to none
+    g = link.graph({"object/cup": ([0.51, 0.1, 0.06], [1, 0, 0, 0]), "object/far": ([1.5, 0, 0], [1, 0, 0, 0])})
+    assert [o.get("pose") for o in g["objects"]] == ["object/cup", None]
+    assert g["relations"] == [{"a": 1, "b": 2, "rel": "on"}]
+    snap = link.snapshot()
+    assert snap["live"] and snap["state"] == "running" and len(snap["objects"]) == 2
+    link.request(False, ["cup"])
+    assert link.graph()["objects"] == [] and link.cloud() is None    # off: nothing shown

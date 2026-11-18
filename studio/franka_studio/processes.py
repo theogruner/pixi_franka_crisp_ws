@@ -75,6 +75,7 @@ class ComponentSpec:
     probe_topic: str | None = None
     probe_service: str | None = None
     order: int = 100
+    needs: list = field(default_factory=list)   # components started first (if not up already)
 
     @classmethod
     def from_dict(cls, name: str, d: dict, order: int = 100) -> "ComponentSpec":
@@ -89,6 +90,7 @@ class ComponentSpec:
             probe_topic=d.get("probe_topic"),
             probe_service=d.get("probe_service"),
             order=d.get("order", order),
+            needs=[str(n) for n in d.get("needs") or []],
         )
 
 
@@ -328,9 +330,22 @@ class ProcessManager:
         proc = self.components.get(name)
         return bool(proc and (proc.alive or proc.detected))
 
-    def start(self, name: str) -> tuple[bool, str]:
+    def start(self, name: str, _starting: frozenset = frozenset()) -> tuple[bool, str]:
+        """Starts ``name``, after the components it ``needs`` that are not up yet (theirs first)."""
         proc = self.components.get(name)
-        return proc.start() if proc else (False, f"Unknown component {name!r}.")
+        if proc is None:
+            return False, f"Unknown component {name!r}."
+        started = []
+        for need in proc.spec.needs:
+            if need in _starting or need == name or not self.components.get(need) or self.is_up(need):
+                continue
+            ok, msg = self.start(need, _starting | {name})
+            if ok:
+                started.append(self.components[need].spec.label)
+        ok, msg = proc.start()
+        if ok and started:
+            msg += f" (also started: {', '.join(started)})"
+        return ok, msg
 
     def stop(self, name: str) -> tuple[bool, str]:
         proc = self.components.get(name)

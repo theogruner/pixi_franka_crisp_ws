@@ -38,6 +38,7 @@ from franka_studio.policy import remote
 from franka_studio.policy.runner import ERROR, LOADING, PolicyRunner
 from franka_studio.processes import ProcessManager
 from franka_studio.projects import Project, list_projects, load_project, save_camera_pose
+from franka_studio.scene_graph import SceneGraphLink, clean_prompts
 from franka_studio.ros import registry
 from franka_studio.state import UiState
 
@@ -79,6 +80,7 @@ class Studio:
         self.processes.set_probe(self._probe)
         self.pointcloud = PointCloudLink(self.ros, cfg.get("pointcloud_topics"))
         self.pose_tracking = PoseTrackingLink(self.ros, cfg.get("pose_tracking_topics"))
+        self.scene_graph = SceneGraphLink(self.ros, cfg.get("scene_graph_topics"))
         self.cluster = Cluster()
         dc = cfg["data_collector"]
         self.collection = DataCollection(lambda: self.ros.call_trigger(dc["trigger_service"]))
@@ -94,6 +96,7 @@ class Studio:
             self.viewer.on_preview_camera = self.pointcloud.preview
             self.viewer.on_align_camera = self.align_camera
             self.viewer.hidden_poses = self.pose_tracking.untracked_poses   # not at the origin while searching
+            self.viewer.scene_graph = lambda: (self.scene_graph.graph(self._tracked_poses()), self.scene_graph.cloud())
 
         self._lock = threading.RLock()
         self._events: collections.deque = collections.deque(maxlen=50)
@@ -219,6 +222,7 @@ class Studio:
             self.project_env = self._make_project_env()
             self._set_view(self.project_env)
             self.pointcloud.set_cameras((project.env_config.get("scene") or {}).get("cameras") or {})
+            self.scene_graph.request(self.scene_graph.enabled, self._detect_prompts())
         if project.error:
             self.notify(f"{project.name}: {project.error}", "warn")
         return self._result(True, f"Project {project.name} — {len(project.policies)} policies.")
@@ -518,6 +522,65 @@ class Studio:
         self._reload_objects()
         return self._result(True, f"{len(cleaned)} objects." if cleaned else "No objects.")
 
+    # ---- object detection / scene graph -----------------------------------------------------------------
+
+    def _detect_prompts(self) -> list[str]:
+        """The project's detection prompts: remembered, else its tracked objects' prompts."""
+        if not self.project:
+            return []
+        remembered = self.state.project(self.project.id).get("detect_prompts")
+        if remembered is not None:
+            return list(remembered)
+        return list(dict.fromkeys(s["prompt"] for s in self.pose_tracking.specs))
+
+    def _tracked_poses(self) -> dict:
+        """{pose name: (position, wxyz)} of the objects the pose tracking has a pose of now."""
+        env = self.active_env
+        if env is None or not self.pose_tracking.specs:
+            return {}
+        hidden = self.pose_tracking.untracked_poses()
+        try:
+            poses = env.render().poses
+        except Exception:
+            return {}
+        return {n: (list(p.position), list(p.wxyz)) for n, p in poses.items()
+                if n.startswith("object/") and n not in hidden}
+
+    def detect_set(self, prompts: object) -> dict:
+        """The Detect prompts of the Objects card (remembered per project)."""
+        if not self.project:
+            return self._result(False, "No project selected.")
+        cleaned, error = clean_prompts(prompts)
+        if error:
+            return self._result(False, error)
+        self.state.set_project(self.project.id, detect_prompts=cleaned)
+        on = self.scene_graph.enabled and bool(cleaned)
+        self.scene_graph.request(on, cleaned)
+        return self._result(True, f"Detecting {', '.join(cleaned)}." if on else
+                            f"{len(cleaned)} objects to detect." if cleaned else "Nothing to detect.")
+
+    def detect_enable(self, on: object) -> dict:
+        """Detection on (starts Point cloud and Object detection when needed) or off (the node idles)."""
+        on = on is True or str(on).lower() in ("1", "true", "on")
+        prompts = self._detect_prompts()
+        if on and not prompts:
+            return self._result(False, "Name the objects to detect first.")
+        if on:
+            for name in ("pointcloud", "scene_graph"):
+                if self.processes.get(name) and not self.processes.is_up(name):
+                    self.processes.start(name)
+        self.scene_graph.request(on, prompts)
+        return self._result(True, f"Detecting {', '.join(prompts)}." if on else "Detection off.")
+
+    def view_mode(self, mode: str) -> dict:
+        """The 3D view: ``scene`` (everything) or ``graph`` (the detected objects only)."""
+        if self.viewer is None:
+            return self._result(False, "The 3D viewer is off (--no-viewer).")
+        if mode not in ("scene", "graph"):
+            return self._result(False, f"Unknown view {mode!r}.")
+        self.viewer.set_mode(mode)
+        return self._result(True, "Scene graph view." if mode == "graph" else "Scene view.")
+
     def _prepare_object_scan(self) -> None:
         """The scan needs the RGB-D of every camera (Point cloud) and the node (Object poses)."""
         mod = next((mid for mid, m in self.modalities.items() if m.component == "pose_tracking"), None)
@@ -719,6 +782,7 @@ class Studio:
             "record_topics": mods.record_topics(self.modalities, self.enabled_modalities) if project else [],
             "pointcloud": self.pointcloud.snapshot(),
             "pose_tracking": self.pose_tracking.snapshot(),
+            "scene_graph": {**self.scene_graph.snapshot(self._tracked_poses()), "prompts": self._detect_prompts()},
             "datasets": self.datasets(),
             "tasks": project.tasks if project else {},
             "conversion_configs": [str(p.relative_to(project.root / "conversion")) for p in project.files("conversion")] if project else [],
@@ -726,7 +790,7 @@ class Studio:
             "cluster": {"host": project.cluster.get("host"), "configured": bool(project.cluster.get("host"))} if project else {},
             "jobs": self.cluster.snapshot(project.id) if project else [],
             "viewer": {"port": self.cfg["viewer"]["port"], "public_url": self.cfg["viewer"].get("public_url"),
-                       "enabled": self.viewer is not None},
+                       "enabled": self.viewer is not None, "mode": self.viewer.mode if self.viewer else "scene"},
             "halted": self.halted,
             "calibration": self.calibration.snapshot(),
             "object_scan": self.object_scan.snapshot(),

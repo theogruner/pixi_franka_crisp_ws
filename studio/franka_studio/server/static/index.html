@@ -133,6 +133,10 @@
             <h2>Scene</h2>
             <span class="scene-env" id="env-name">no scene</span>
           </div>
+          <div class="segmented scene-seg" id="view-seg" role="tablist" aria-label="3D view">
+            <button data-mode="scene" class="active" title="Everything: robots, point cloud, cameras">Scene</button>
+            <button data-mode="graph" title="Only the detected objects, their frames and relations">Scene graph</button>
+          </div>
           <div class="scene-actions">
             <span class="scene-rate" id="obs-rate">— Hz</span>
             <button class="scene-btn" id="viewer-reload" title="Reload viewer"><svg class="i"><use href="#i-refresh"/></svg></button>
@@ -145,6 +149,10 @@
           <div class="viewer-empty" id="viewer-empty">
             <svg class="i xl"><use href="#i-cube"/></svg>
             <p>3D viewer not running</p>
+          </div>
+          <div class="viewer-hint" id="viewer-hint" hidden>
+            <svg class="i"><use href="#i-graph"/></svg><span id="viewer-hint-text">No objects detected</span>
+            <button class="btn btn-sm btn-tinted" id="viewer-hint-btn">Detect objects</button>
           </div>
         </div>
       </section>
@@ -304,6 +312,23 @@
             <span class="panel-sub" id="objects-sub"></span>
           </header>
           <div class="panel-body">
+            <div class="section-label with-action"><span>Detect</span><span class="det-state" id="det-state"></span></div>
+            <div class="group">
+              <label class="row det-switch" title="SAM 3 on every camera, fused into 3D objects and their scene graph">
+                <div class="row-icon" id="det-icon"><svg class="i"><use href="#i-graph"/></svg></div>
+                <div class="row-main">
+                  <div class="row-title"><span>Find objects</span></div>
+                  <div class="row-sub" id="det-sub">SAM 3 on all cameras</div>
+                </div>
+                <span class="switch"><input type="checkbox" id="det-on" aria-label="Detect objects"><span></span></span>
+              </label>
+              <div class="tokens" id="det-tokens">
+                <input id="det-new" placeholder="Add object, e.g. ceramic mug" autocomplete="off" spellcheck="false" aria-label="Object to detect">
+              </div>
+            </div>
+            <div class="chip-row det-cams" id="det-cams"></div>
+
+            <div class="section-label">Track poses</div>
             <div class="group">
               <div id="obj-list"></div>
               <form class="row obj-add" id="obj-add-form">
@@ -326,6 +351,15 @@
             <div class="log-box" id="obj-progress" hidden></div>
 
             <details class="help">
+              <summary><svg class="i"><use href="#i-info"/></svg>How detection works</summary>
+              <p>Each name is a text prompt for SAM 3, run on every camera. A camera's masks are lifted with its depth
+                (edges and the table left out) and joined in 3D with the other cameras': one object per thing, in its own
+                colour. What only one camera finds while the others see that spot is dropped. <b>Scene graph</b> above the
+                3D view shows only the objects, their boxes and, when the pose tracking has one, their frame; the
+                <b>Graph</b> tab lists them and how they relate (on, in, next to). Precise names work best
+                (<i>ceramic mug</i>, <i>black machine</i>). Detection and pose tracking each run their own model.</p>
+            </details>
+            <details class="help">
               <summary><svg class="i"><use href="#i-info"/></svg>How scanning works</summary>
               <p>Each name is the segmenter's text prompt. Objects without a mesh: <b>Scan</b>, then move the wrist cameras
                 (teleop or by hand) to views of the objects from all sides, <b>Capture view</b> at each, <b>Finish</b>: a mesh per
@@ -333,6 +367,29 @@
                 <i>Automatic</i>: the arms move on their own instead. Objects with a mesh are not scanned again; the tracking
                 finds them (<svg class="i inline"><use href="#i-refresh"/></svg> scans one again).</p>
             </details>
+          </div>
+        </section>
+
+        <!-- ======== Scene graph -->
+        <section class="panel" id="graph-card" data-title="Scene graph" data-tab="Graph" data-icon="i-graph" data-dock="inspector">
+          <header class="panel-head">
+            <h2 class="panel-title">Scene graph</h2>
+            <span class="panel-sub" id="graph-sub"></span>
+          </header>
+          <div class="panel-body">
+            <div class="graph-view" id="graph-view">
+              <svg id="graph-svg" viewBox="0 0 320 210" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Scene graph, seen from above"></svg>
+              <div class="graph-empty" id="graph-empty">
+                <svg class="i xl"><use href="#i-graph"/></svg>
+                <p id="graph-empty-text">Detection is off</p>
+                <button class="btn btn-sm btn-tinted" id="graph-detect-btn">Detect objects</button>
+              </div>
+              <span class="graph-axis">seen from above · robot at the bottom</span>
+            </div>
+            <div class="section-label">Objects</div>
+            <div class="group" id="graph-objects"><div class="empty">No objects.</div></div>
+            <div class="section-label">Relations</div>
+            <div class="group" id="graph-rels"><div class="empty">No relations.</div></div>
           </div>
         </section>
 
@@ -450,6 +507,8 @@
       <symbol id="i-sparkles" viewBox="0 0 24 24"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/><path d="M19 15l.8 2.2 2.2.8-2.2.8L19 21l-.8-2.2-2.2-.8 2.2-.8z"/></symbol>
       <symbol id="i-rocket" viewBox="0 0 24 24"><path d="M5 15c-1.5 1.3-2 5-2 5s3.7-.5 5-2c.7-.8.7-2.1-.1-2.9a2.1 2.1 0 0 0-2.9-.1z"/><path d="M12 15l-3-3a22 22 0 0 1 2-4A13 13 0 0 1 22 2c0 2.7-.8 7.5-6 11a22 22 0 0 1-4 2z"/><path d="M9 12H4s.5-3 2-4c1.6-1.1 5 0 5 0M12 15v5s3-.5 4-2c1.1-1.6 0-5 0-5"/></symbol>
       <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 12a8 8 0 0 1-14 5.3L4 15M4 12a8 8 0 0 1 14-5.3L20 9"/><path d="M20 4v5h-5M4 20v-5h5"/></symbol>
+      <symbol id="i-graph" viewBox="0 0 24 24"><circle cx="6" cy="6.5" r="2.5"/><circle cx="18" cy="8" r="2.5"/><circle cx="10.5" cy="18" r="2.5"/><path d="m8.5 6.8 7 .9M16.3 9.9l-4.3 5.9M6.9 8.9l2.6 6.7"/></symbol>
+      <symbol id="i-x" viewBox="0 0 24 24"><path d="M7 7l10 10M17 7 7 17"/></symbol>
       <symbol id="i-cube" viewBox="0 0 24 24"><path d="m20.5 16-8.5 4.8L3.5 16V8L12 3.2 20.5 8z"/><path d="m3.8 7.6 8.2 4.6 8.2-4.6M12 20.8v-8.6"/></symbol>
       <symbol id="i-external" viewBox="0 0 24 24"><path d="M14 4h6v6M10 14 20 4M18 13.5V18a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4.5"/></symbol>
       <symbol id="i-expand" viewBox="0 0 24 24"><path d="M15 4h5v5M9 20H4v-5M20 4l-6.5 6.5M4 20l6.5-6.5"/></symbol>

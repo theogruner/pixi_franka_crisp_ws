@@ -11,6 +11,10 @@ recording) gets:
   ``observation.pointcloud``) as their own cloud, so the policy's input can be checked against
   the full merged cloud.
 
+Two modes (``set_mode``, the page's Scene / Scene graph switch): ``scene`` draws all of the above;
+``graph`` only the detected objects (scene_graph.py): their points in their colours, boxes, labels,
+lines between related objects and, where the pose tracking has one, their frame.
+
 Rendering runs in its own thread at ``viewer.rate_hz``; the env's listener only stores the newest
 record, so the robot's control loop never waits for the viewer.
 """
@@ -39,6 +43,19 @@ OBS_CLOUD_COLOR = (250, 204, 21)   # observation point clouds without colour
 DEFAULT_CAMERA_POSITION = (0.95, 0.0, 0.75)
 DEFAULT_CAMERA_TARGET = (0.35, 0.0, 0.05)
 POSE_COLORS = [(244, 114, 182), (167, 139, 250), (52, 211, 153), (251, 191, 36)]
+RELATION_COLOR = (142, 142, 147)   # lines between related objects (graph mode)
+
+
+def _mtime(file: str) -> float | None:
+    """When a (project) mesh file was last written; None for package:// URLs or a missing file."""
+    if "://" in file:
+        return None
+    try:
+        from franka_studio.paths import resolve
+
+        return resolve(file).stat().st_mtime
+    except (OSError, ValueError):
+        return None
 
 
 def _package_handler(fname: str) -> str:
@@ -84,6 +101,7 @@ class _Robot:
         self.viser = ViserUrdf(server, self.urdf, root_node_name=f"/robots/{name}")
         self.joint_names = list(self.viser.get_actuated_joint_names())
         self.cfg = np.zeros(len(self.joint_names))
+        self.shown = True
 
     def update(self, joints: dict) -> None:
         cfg = np.array([joints.get(n, c) for n, c in zip(self.joint_names, self.cfg)])
@@ -156,6 +174,11 @@ class SceneViewer:
         self.on_preview_camera = None  # fn(name, position, wxyz): unsaved pose (moves the merged cloud)
         self.on_align_camera = None    # fn(name, position, wxyz) -> {ok, message, position, wxyz}
         self.hidden_poses = None       # fn() -> names of poses not to draw (e.g. objects not tracked)
+        self.scene_graph = None        # fn() -> (graph {objects, relations}, cloud (xyz, rgb, stamp) | None)
+        self.mode = "scene"            # scene | graph
+        self._graph: dict[str, object] = {}       # graph-mode scene nodes
+        self._graph_keys: dict[str, object] = {}  # what each graph node was drawn from (redraw on change)
+        self._graph_poses: set[str] = set()       # tracked poses of detected objects (drawn in graph mode)
         self._placed: dict[str, tuple] = {}   # name -> (position, wxyz) for unposed cameras
         self._unsaved: set[str] = set()       # placed (gizmo / alignment) but not saved yet
         self._placeable: list[str] = []
@@ -214,10 +237,13 @@ class SceneViewer:
         self._nodes.clear()
         self._gui_images.clear()
 
+    def _robots_visible(self) -> bool:
+        return self.show_robots.value and self.mode == "scene"
+
     def _set_robot_visibility(self) -> None:
         for robot in self._robots.values():
             try:
-                robot.viser.show_visual = self.show_robots.value
+                robot.viser.show_visual = robot.shown = self._robots_visible()
             except Exception:
                 pass
 
@@ -240,6 +266,7 @@ class SceneViewer:
 
     def _render_once(self) -> None:
         env, record = self._env, self._record
+        self._render_graph()
         if env is None:
             return
         scene = env.render()
@@ -255,8 +282,9 @@ class SceneViewer:
         robots = ", ".join(f"{n} {'✓' if n in self._robots else '…'}" for n in scene.robots) or "none"
         err = "".join(f"\n\n⚠️ {n}: {e}" for n, e in self._robot_errors.items())
         mode = record.mode if record else "waiting"
+        view = f"\n\n**Scene graph view** · {self._graph_count} objects" if self.mode == "graph" else ""
         self.info_md.content = (f"**{env.name}** · {mode} · step {record.step if record else 0}\n\n"
-                                f"robots: {robots}{err}")
+                                f"robots: {robots}{err}{view}")
 
     def _render_robots(self, robots: dict, frames: list) -> None:
         for name in [n for n in self._robots if n not in robots]:  # not part of this env
@@ -274,6 +302,8 @@ class SceneViewer:
                     continue
             if name in self._robots:
                 self._robots[name].update(r["joints"])
+                if self._robots[name].shown != self._robots_visible():
+                    self._set_robot_visibility()
         for link in frames:
             for robot in self._robots.values():
                 T = robot.link_pose(link)
@@ -282,7 +312,7 @@ class SceneViewer:
                 h = self._node(f"/frames/{link}", lambda link=link: self.server.scene.add_frame(
                     f"/frames/{link}", axes_length=0.08, axes_radius=0.004))
                 h.position, h.wxyz = T[:3, 3], _quat_from_matrix(T)
-                h.visible = self.show_frames.value
+                h.visible = self.show_frames.value and self.mode == "scene"
                 break
 
     def _render_poses(self, poses: dict, env: SceneEnv) -> None:
@@ -295,13 +325,25 @@ class SceneViewer:
                 f"/poses/{name}", axes_length=float(cfg.get("axes_length", 0.06)),
                 axes_radius=float(cfg.get("axes_radius", 0.003)),
                 origin_radius=0.008, origin_color=color))
-            h.position, h.wxyz, h.visible = pose.position, pose.wxyz, self.show_frames.value and name not in hidden
+            scene_mode = self.mode == "scene"
+            shown = (self.show_frames.value and name not in hidden) if scene_mode else name in self._graph_poses
+            h.position, h.wxyz, h.visible = pose.position, pose.wxyz, shown
             if cfg.get("label", True):
-                self._node(f"/poses/{name}/label", lambda name=name: self.server.scene.add_label(
+                label = self._node(f"/poses/{name}/label", lambda name=name: self.server.scene.add_label(
                     f"/poses/{name}/label", name, font_screen_scale=0.7))
+                label.visible = scene_mode   # graph mode: the detection's label
             if cfg.get("mesh"):
-                self._node(f"/poses/{name}/mesh", lambda name=name, cfg=cfg: self._add_mesh(
-                    f"/poses/{name}/mesh", cfg["mesh"], cfg.get("mesh_scale", 1.0)))
+                path = f"/poses/{name}/mesh"
+                key = (cfg["mesh"], _mtime(cfg["mesh"]), cfg.get("mesh_scale", 1.0))
+                if self._nodes.get(path + ":key") not in (None, key):   # another file, or rewritten (a scan)
+                    try:
+                        self._nodes.pop(path).remove()
+                    except Exception:
+                        self._nodes.pop(path, None)
+                self._nodes[path + ":key"] = key
+                mesh = self._node(path, lambda path=path, cfg=cfg: self._add_mesh(
+                    path, cfg["mesh"], cfg.get("mesh_scale", 1.0)))
+                mesh.visible = scene_mode    # graph mode: the detected points, not the model
 
     def _add_mesh(self, path: str, file: str, scale: float) -> object:
         import trimesh
@@ -314,8 +356,11 @@ class SceneViewer:
     def _render_clouds(self, clouds: dict, env: SceneEnv) -> None:
         for name, (xyz, rgb, stamp) in clouds.items():
             path = f"/clouds/{name}"
-            if self._nodes.get(path + ":stamp") == stamp or not self._image_due(path, CLOUD_PERIOD_S):
-                continue  # unchanged, or sent less than CLOUD_PERIOD_S ago
+            if path in self._nodes:
+                self._nodes[path].visible = self.show_clouds.value and self.mode == "scene"
+            if self.mode != "scene" or self._nodes.get(path + ":stamp") == stamp or \
+                    not self._image_due(path, CLOUD_PERIOD_S):
+                continue  # hidden, unchanged, or sent less than CLOUD_PERIOD_S ago
             self._nodes[path + ":stamp"] = stamp
             cfg = env.scene.cloud_cfg.get(name, {})
             position, wxyz = np.zeros(3), np.array([1.0, 0, 0, 0])
@@ -363,11 +408,13 @@ class SceneViewer:
             # adding under the same name replaces the previous frustum
             self._nodes[path] = self.server.scene.add_camera_frustum(
                 path, fov=shape[0], aspect=shape[1], scale=shape[2], image=img, format="jpeg", jpeg_quality=70,
-                position=tuple(pose[0]), wxyz=tuple(pose[1]), color=color, visible=self.show_cams.value)
+                position=tuple(pose[0]), wxyz=tuple(pose[1]), color=color,
+                visible=self.show_cams.value and self.mode == "scene")
             self._nodes[path + ":shape"] = shape
             self._image_sent[path] = time.time()
         else:  # cheap per-frame update; the image only every IMAGE_PERIOD_S
-            handle.position, handle.wxyz, handle.visible = tuple(pose[0]), tuple(pose[1]), self.show_cams.value
+            handle.position, handle.wxyz = tuple(pose[0]), tuple(pose[1])
+            handle.visible = self.show_cams.value and self.mode == "scene"
             if self._image_due(path):
                 handle.image = img
         text = label or name
@@ -527,7 +574,9 @@ class SceneViewer:
 
     def _render_obs_cloud(self, key: str, value: np.ndarray) -> None:
         path = f"/observation/{key}"
-        if not self._image_due(path, CLOUD_PERIOD_S):
+        if path in self._nodes:
+            self._nodes[path].visible = self.show_obs_cloud.value and self.mode == "scene"
+        if self.mode != "scene" or not self._image_due(path, CLOUD_PERIOD_S):
             return
         xyz = np.ascontiguousarray(value[:, :3], dtype=np.float32)
         if value.shape[1] == 6:
@@ -537,6 +586,99 @@ class SceneViewer:
         self._nodes[path] = self.server.scene.add_point_cloud(
             path, xyz, rgb, point_size=self.point_size.value * 1.6, point_shape="circle",
             visible=self.show_obs_cloud.value)
+
+    # ---- scene graph view --------------------------------------------------------------------------
+
+    def set_mode(self, mode: str) -> None:
+        """``scene``: everything; ``graph``: only the detected objects (the rest is hidden, not removed)."""
+        self.mode = mode if mode in ("scene", "graph") else "scene"
+        self._set_robot_visibility()
+        for path, handle in list(self._nodes.items()):
+            if ":" in path or not hasattr(handle, "visible"):
+                continue
+            if path.startswith(("/clouds/", "/cameras/", "/observation/", "/frames/")):
+                try:
+                    handle.visible = self.mode == "scene" and self._shown_in_scene(path)
+                except Exception:
+                    pass
+        if self.mode == "scene":
+            self._clear_graph()
+
+    def _shown_in_scene(self, path: str) -> bool:
+        if path.startswith("/clouds/"):
+            return self.show_clouds.value
+        if path.startswith("/cameras/"):
+            return self.show_cams.value
+        if path.startswith("/observation/"):
+            return self.show_obs_cloud.value
+        return self.show_frames.value
+
+    @property
+    def _graph_count(self) -> int:
+        return sum(1 for k in self._graph if k.endswith("/box"))
+
+    def _clear_graph(self, keep: set | None = None) -> None:
+        for path in sorted(self._graph, key=len, reverse=True):
+            if keep is not None and path in keep:
+                continue
+            try:
+                self._graph.pop(path).remove()
+            except Exception:
+                pass
+            self._graph_keys.pop(path, None)
+        if keep is None:
+            self._graph_poses = set()
+
+    def _graph_node(self, path: str, key: object, factory) -> None:
+        """(Re-)draws ``path`` when what it is drawn from (``key``) changed."""
+        if self._graph_keys.get(path) != key or path not in self._graph:
+            self._graph[path] = factory()   # adding under the same name replaces it
+            self._graph_keys[path] = key
+
+    def _render_graph(self) -> None:
+        if self.mode != "graph" or self.scene_graph is None:
+            return
+        try:
+            graph, cloud = self.scene_graph()
+        except Exception as e:
+            log.debug("scene graph: %s", e)
+            return
+        objects = graph.get("objects") or []
+        self._graph_poses = {o["pose"] for o in objects if o.get("pose")}
+        drawn: set[str] = set()
+        if cloud is not None and len(cloud[0]):
+            xyz, rgb, stamp = cloud
+            self._graph_node("/graph/points", (stamp, self.point_size.value), lambda: self.server.scene.add_point_cloud(
+                "/graph/points", xyz, rgb, point_size=self.point_size.value * 1.5, point_shape="circle"))
+            drawn.add("/graph/points")
+        centres = {}
+        for o in objects:
+            box = o.get("box") or {}
+            if "center" not in box:
+                continue
+            base = f"/graph/objects/{o['id']}"
+            centre, size, yaw = np.asarray(box["center"]), np.asarray(box["size"]), float(box.get("yaw", 0.0))
+            centres[o["id"]] = centre
+            color = tuple(int(c) for c in o.get("color", BRAND))
+            wxyz = (np.cos(yaw / 2), 0.0, 0.0, np.sin(yaw / 2))
+            key = (tuple(np.round(centre, 3)), tuple(np.round(size, 3)), round(yaw, 2), color)
+            self._graph_node(base + "/box", key, lambda: self.server.scene.add_box(
+                base + "/box", color=color, dimensions=tuple(size), wireframe=True, position=tuple(centre), wxyz=wxyz,
+                cast_shadow=False, receive_shadow=False))
+            text = o.get("label") or o.get("prompt") or "?"
+            top = (float(centre[0]), float(centre[1]), float(centre[2] + size[2] / 2 + 0.02))
+            self._graph_node(base + "/label", (text, tuple(np.round(top, 3))), lambda: self.server.scene.add_label(
+                base + "/label", text, position=top, font_screen_scale=0.8, anchor="bottom-center"))
+            drawn |= {base + "/box", base + "/label"}
+        segments = [(centres[r["a"]], centres[r["b"]]) for r in graph.get("relations") or []
+                    if r.get("a") in centres and r.get("b") in centres]
+        if segments:
+            pts = np.array(segments, dtype=np.float32)
+            key = tuple(np.round(pts, 2).ravel())
+            self._graph_node("/graph/relations", key, lambda: self.server.scene.add_line_segments(
+                "/graph/relations", pts, RELATION_COLOR, thickness=2.0, thickness_units="screen"))
+            drawn.add("/graph/relations")
+        self._clear_graph(keep=drawn)
 
     def stop(self) -> None:
         self._running = False

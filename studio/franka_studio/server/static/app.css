@@ -278,6 +278,7 @@ body.resizing iframe, body.dragging-panel iframe { pointer-events: none; }
   cursor: pointer; transition: background .15s, color .15s, box-shadow .15s; white-space: nowrap;
 }
 #dock-inspector .tab .i { display: none; }
+#dock-inspector .tab { padding: 0 6px; }   /* six tabs fit the default width */
 .tab .i { width: 14px; height: 14px; }
 .tab:hover { color: var(--label); }
 .tab[aria-selected="true"] { color: var(--label); background: var(--surface-3); box-shadow: 0 1px 2px rgba(0, 0, 0, .2); }
@@ -829,3 +830,81 @@ label.chip:has(input:focus-visible) { outline: 3px solid color-mix(in srgb, var(
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
+
+/* ================================================================ detection & scene graph */
+.scene-seg { background: rgba(118, 118, 128, .24); }
+.scene-seg button { color: rgba(235, 235, 245, .6); height: 24px; }
+.scene-seg button:hover { color: #fff; }
+.scene-seg button.active, :root[data-theme="light"] .scene-seg button.active { background: #636366; color: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, .3); }
+.viewer-hint {
+  position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); display: flex; align-items: center; gap: 9px;
+  padding: 6px 6px 6px 12px; border-radius: 999px; background: rgba(44, 44, 46, .86); color: rgba(235, 235, 245, .8);
+  font-size: 12.5px; white-space: nowrap; box-shadow: 0 6px 24px rgba(0, 0, 0, .35); backdrop-filter: blur(20px) saturate(1.6);
+  -webkit-backdrop-filter: blur(20px) saturate(1.6); max-width: calc(100% - 32px);
+}
+.viewer-hint > span { overflow: hidden; text-overflow: ellipsis; }
+.viewer-hint .btn[hidden] { display: none; }
+.viewer-hint:has(.btn[hidden]) { padding-right: 14px; }
+
+.det-state { font-size: 11.5px; font-weight: 500; color: var(--label-3); font-variant-numeric: tabular-nums; }
+.det-state.run { color: var(--green-text); }
+.det-state.busy, .det-state.warn { color: var(--orange-text); }
+.det-state.err { color: var(--red-text); }
+.det-switch { cursor: pointer; }
+.row-icon.on { background: var(--green-tint); color: var(--green-text); }
+.row-icon.err { background: var(--red-tint); color: var(--red-text); }
+#det-sub.err { color: var(--red-text); white-space: normal; }
+.tokens {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 10px 9px 12px; cursor: text;
+  box-shadow: inset 0 .5px 0 var(--sep);
+}
+.tokens input { flex: 1; min-width: 120px; height: 26px; border: 0; background: transparent; padding: 0 2px; box-shadow: none; }
+.tokens input:focus { box-shadow: none; outline: none; }
+.token {
+  display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 3px 0 10px; border-radius: 999px;
+  background: var(--fill-2); font-size: 12.5px; font-weight: 500; white-space: nowrap; cursor: default;
+}
+.token .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--c); flex: none; transition: background .3s; }
+.token:not(.found) .dot { background: transparent; box-shadow: inset 0 0 0 1.5px var(--c); }
+.token b { font-weight: 600; color: var(--label-2); font-size: 11px; }
+.token button {
+  width: 20px; height: 20px; border-radius: 50%; border: 0; background: transparent; color: var(--label-3);
+  display: grid; place-items: center; cursor: pointer; padding: 0;
+}
+.token button:hover { background: var(--fill); color: var(--label); }
+.token button .i { width: 12px; height: 12px; stroke-width: 2.2; }
+.det-cams { margin: 8px 2px 0; }
+.det-cams[hidden] { display: none; }
+.det-cams .chip { height: 22px; font-size: 11px; padding: 0 8px; }
+.det-cams .chip .dot { background: var(--label-3); }
+
+.graph-view { position: relative; background: var(--surface-2); border-radius: var(--r-lg); aspect-ratio: 320 / 210; overflow: hidden; }
+#graph-svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+#graph-svg .node circle { stroke: var(--surface-2); stroke-width: 2; transition: r .2s; }
+#graph-svg .node .pose-ring { fill: none; stroke-width: 1.5; stroke-dasharray: 3 2.5; }
+#graph-svg .node .table-mark { stroke: var(--label-3); stroke-width: 2; stroke-linecap: round; }
+#graph-svg .node text { fill: var(--label); font: 500 11px var(--font); text-anchor: middle; paint-order: stroke; stroke: var(--surface-2); stroke-width: 5px; stroke-linejoin: round; }
+#graph-svg .node.stale { opacity: .45; }
+#graph-svg .edge { stroke: var(--label-3); stroke-width: 1.5; }
+#graph-svg .edge.soft { stroke-dasharray: 4 3; }
+#graph-svg marker path { fill: var(--label-3); }
+#graph-svg .edge-label rect { fill: var(--surface-2); stroke: var(--sep); stroke-width: 1; }
+#graph-svg .edge-label text { fill: var(--label-2); font: 500 10px var(--font); text-anchor: middle; }
+#graph-svg .node, #graph-svg .edge, #graph-svg .edge-label { transition: opacity .15s; }
+#graph-svg.focus .node:not(.hl), #graph-svg.focus .edge:not(.hl), #graph-svg.focus .edge-label:not(.hl) { opacity: .2; }
+.graph-empty { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; gap: 8px; color: var(--label-3); text-align: center; padding: 12px; }
+.graph-empty[hidden] { display: none; }
+.graph-empty p { margin: 0; font-size: 12.5px; max-width: 240px; }
+.graph-empty .btn[hidden] { display: none; }
+.graph-axis { position: absolute; left: 10px; top: 7px; font-size: 10px; color: var(--label-3); pointer-events: none; }
+.graph-empty:not([hidden]) ~ .graph-axis { display: none; }
+.obj-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--c); flex: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--c) 25%, transparent); }
+.graph-obj { min-height: 46px; gap: 10px; }
+.graph-obj.stale .row-main, .graph-obj.stale .obj-dot { opacity: .5; }
+.graph-obj .row-sub { gap: 5px; }
+.graph-obj .warn-text { color: var(--orange-text); overflow: hidden; text-overflow: ellipsis; }
+.graph-rel { min-height: 38px; gap: 7px; font-size: 12.5px; }
+.graph-rel > span:not([class]) { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.graph-rel .rel { color: var(--label-2); font-size: 11.5px; padding: 1px 7px; border-radius: 6px; background: var(--fill-2); }
+.graph-rel .row-mono { margin-left: auto; }
+.graph-obj .row-mono { flex: none; }
