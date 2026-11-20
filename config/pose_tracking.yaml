@@ -54,11 +54,18 @@ tracker:
   min_iou: 0.5
   reg_min_iou: 0.5                   # rendered vs segmented masks (mean over cameras) to accept a
                                      # (re-)registration; the scanned cup reaches 0.5-0.7 (thin walls, holes)
-  # icp: the mesh is fitted onto the depth each frame. points: points on the object are followed
-  # in 2D, anchored to fixed mesh points (consistent: no sliding; turns of symmetric objects show),
-  # jointly refined with the depth; ICP only on frames with too few agreeing tracks.
-  mode: points
-  point_tracker: bootstapir          # bootstapir: GPU, ~18 ms, no drift | lk: optical flow, ~1 ms, drifts
+  # Between the mask moments: m3t: M3T fits every object frame to frame on all cameras, by its
+  # outline in the colour image and its surface on the depth (a hand in front left out); follows
+  # an object carried by hand; CPU, ~5 ms; needs `pixi run build-m3t` in ../pose_tracking and the
+  # desktop's display, else the node falls back to points and says so. points: points on the object
+  # followed in 2D on the static camera only (BootsTAPIR, GPU), anchored to mesh points, refined
+  # with the depth. icp: the mesh fitted onto the depth each frame.
+  mode: m3t
+  m3t:                               # M3T settings (pose_tracking/m3t.py M3TConfig), else its defaults
+    # trust the stereo depth more than M3T's defaults (5/3/2 cm; made for 640x480 sensors): on the
+    # bag the static cup's position std 1.3-2.3 -> 0.6-1.0 mm, the stand's 0.6-1.4 -> 0.2-0.3 mm
+    depth_standard_deviations: [0.03, 0.015, 0.008]
+  point_tracker: bootstapir          # points mode: bootstapir: GPU, ~18 ms, no drift | lk: optical flow, ~1 ms, drifts
   points_per_object: 64
   points_refine: true                # off: the pose from the point tracks alone
   # Checks on every mask moment (~2 Hz with masks_from: detection): the pose of that moment against
@@ -69,7 +76,36 @@ tracker:
   # A re-registration comes back as it was unless another pose is clearly better (a stand turned by
   # half a turn, a cup's handle side: near-symmetric shapes fit alike)
   reg_keep_bonus: 0.15
-  max_see_through: 0.5               # a correct pose of a fitting model: 0.02-0.2 (stand, scanned cup)
+  # See-through of a correct pose (live 2026-11-19): stand 0.02-0.06, machine 0.1-0.18, the measured
+  # cup 0.1-0.45 (stereo depth reads the table behind its lower side wall); the cup lying on its side
+  # 0.77-0.83. max_see_through: to accept a registration (0.2 rejected right cup poses at 0.24).
+  max_see_through: 0.35
   see_through_m: 0.02
-  bad_checks_lost: 2
+  # A tracked object's mask check fails on IoU < min_iou, or a see-through above this (at 0.2 the
+  # cup flipped to lost and was re-registered, 1.2 s with the loop stalled, about every second).
+  track_max_see_through: 0.6
+  bad_checks_lost: 3
+  # m3t: a registered object is held (M3T's pose, else the last; its age grows) while no camera's depth
+  # confirms it (out of view, a gripper in front): lost only by bad_checks_lost bad mask checks in a row
+  hold_tracks: true
+  # A pose with more than this share of its surface over 1 cm under support_z is inside the table:
+  # never registered, and a tracked one re-registered. Not a resting rule (lifting, tilting, any
+  # turn stay possible). No camera sees below the table top: the coffee machine lying on its side
+  # 7 cm deep in it fitted everything they see (7.5-8.5 % of its surface below; right poses 0 %).
+  # null: off.
+  max_below_support: 0.02
+  # m3t, turn_from outline (cup): the all-round turn search on the masks (handle side) at most every
+  # this many s (~250 ms, the loop waits); between, +-10 deg around the pose (~50 ms)
+  outline_full_every_s: 3.0
+  # Registration: m3t = M3T from 48 orientations (each own axis up x 8 turns), FPFH's pose and the
+  # pose as it was, 30 steps each on the moment's cameras, best by fitness x IoU x (1 - see-through);
+  # ~3 s in a worker thread (tracking goes on). icp (in the loop) took the coffee machine lying on its
+  # side: a box with poor stereo, ICP slid along its faces.
+  register_with: m3t
+  reg_m3t_yaws: 8
+  reg_m3t_steps: 30
+  # Flips: every this many s a tracked object's pose and its half turns about its own axes are fitted
+  # by M3T (worker) and scored; a turn better by flip_min_gain (relative) turns the object over.
+  flip_check_s: 3.0
+  flip_min_gain: 0.05
   correct_on_masks: true

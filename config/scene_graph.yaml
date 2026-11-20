@@ -40,6 +40,10 @@ detect:
   match_m: 0.025                     # points of two cameras' masks this close: the same object
   min_support: 0.6                   # found / (found + missed) of the cameras that see an object
   strong_score: 0.7                  # ... unless one camera is this sure (and only one missed it)
+  # A camera with a weak detection of the object (score from this up to the segmenter's threshold)
+  # where it is did not miss it; weak ones make no object of their own. A blue cup seen from straight
+  # above is "cup" with 0.2 only (0.73 / 0.55 from the side): counted as a miss, it was dropped.
+  weak_score: 0.15
   confirm_hits: 2                    # moments until an object found by one camera only shows
   forget_s: 4.0                      # s an object stays after it was last found
   near_m: 0.05                       # next to: closer than this

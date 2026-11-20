@@ -522,6 +522,16 @@ class Studio:
         self._reload_objects()
         return self._result(True, f"{len(cleaned)} objects." if cleaned else "No objects.")
 
+    def objects_retrack(self, name: str) -> dict:
+        """Objects card, Find again: the pose tracking forgets ``name``'s pose and registers it from
+        scratch (a pose that went wrong or got lost for good)."""
+        if not any(s["name"] == name for s in self.pose_tracking.specs):
+            return self._result(False, f"No object {name!r} in this project.")
+        if not self.pose_tracking.live():
+            return self._result(False, "The object pose tracking is not running.")
+        self.pose_tracking.reset_object(name)
+        return self._result(True, f"{name}: searching again (registered anew from the next masks).")
+
     # ---- object detection / scene graph -----------------------------------------------------------------
 
     def _detect_prompts(self) -> list[str]:
@@ -579,7 +589,7 @@ class Studio:
         if mode not in ("scene", "graph"):
             return self._result(False, f"Unknown view {mode!r}.")
         self.viewer.set_mode(mode)
-        return self._result(True, "Scene graph view." if mode == "graph" else "Scene view.")
+        return {"ok": True, "message": ""}   # the switch shows itself: no toast
 
     def _prepare_object_scan(self) -> None:
         """The scan needs the RGB-D of every camera (Point cloud) and the node (Object poses)."""

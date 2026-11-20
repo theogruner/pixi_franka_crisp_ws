@@ -736,9 +736,10 @@ label.chip:has(input:focus-visible) { outline: 3px solid color-mix(in srgb, var(
 .console .l-studio { color: var(--log-studio); }
 
 /* ================================================================ toasts */
+/* bottom right: at the top they covered the viewer's Scene / Scene graph switch */
 .toasts {
-  position: fixed; top: calc(var(--toolbar-h) + 10px); left: 50%; transform: translateX(-50%); z-index: 50;
-  display: flex; flex-direction: column; align-items: center; gap: 8px; width: min(460px, calc(100vw - 24px)); pointer-events: none;
+  position: fixed; bottom: 16px; right: 16px; z-index: 50;
+  display: flex; flex-direction: column; align-items: flex-end; gap: 8px; width: min(400px, calc(100vw - 32px)); pointer-events: none;
 }
 .toast {
   pointer-events: auto; display: flex; gap: 10px; align-items: flex-start; padding: 10px 14px; border-radius: 14px; width: 100%;
@@ -750,8 +751,8 @@ label.chip:has(input:focus-visible) { outline: 3px solid color-mix(in srgb, var(
 .toast.error .i { color: var(--red); }
 .toast.warn .i { color: var(--orange); }
 .toast > div { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-.toast.out { opacity: 0; transform: translateY(-6px) scale(.98); transition: all .3s var(--ease); }
-@keyframes toast-in { from { opacity: 0; transform: translateY(-10px) scale(.96); } }
+.toast.out { opacity: 0; transform: translateY(6px) scale(.98); transition: all .3s var(--ease); }
+@keyframes toast-in { from { opacity: 0; transform: translateY(10px) scale(.96); } }
 
 /* ================================================================ sheet (confirmation dialog) */
 .sheet {

@@ -53,6 +53,12 @@ function changed(key, value) {
 async function post(action, body = {}) {
   try {
     const r = await fetch(`/api/${action}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    if (!(r.headers.get("Content-Type") || "").includes("json")) {
+      // e.g. 404: the page (always fresh) knows an action the running studio server does not yet
+      const why = r.status === 404 ? "the running studio does not know this action yet: restart the studio" : (await r.text()).slice(0, 200);
+      toast(`${action}: HTTP ${r.status} (${why})`, "error", true);
+      return { ok: false };
+    }
     const data = await r.json();
     if (data && data.message && !data.ok) toast(data.message, "error", true);
     return data;
@@ -394,7 +400,9 @@ function renderPoseTracking(s) {
   // per object: the last mask check (IoU with the masks, see-through: a camera sees past the model)
   const check = (o) => (o.iou != null ? ` · IoU ${o.iou.toFixed(2)}` : "")
     + (o.see_through != null ? ` · see-through ${o.see_through.toFixed(2)}` : "");
-  el.innerHTML = `<div class="live-head"><span class="dot"></span><span>Object poses</span><b>${st.hz.toFixed(1)} Hz</b><span>${esc(st.camera)}</span>${masks}</div>
+  // the tracker between masks: m3t (outline + depth on all cameras), points (2D tracks), icp
+  const mode = st.mode ? `<span class="muted" title="Tracking between the masks">${esc(st.mode)}${st.mode === "m3t" && st.m3t_ms != null ? ` ${st.m3t_ms.toFixed(0)} ms` : ""}</span>` : "";
+  el.innerHTML = `<div class="live-head"><span class="dot"></span><span>Object poses</span><b>${st.hz.toFixed(1)} Hz</b><span>${esc(st.camera)}</span>${mode}${masks}</div>
     ${st.error ? `<div class="err">${esc(st.error)}</div>` : ""}
     <div class="live-grid">${objs.map(([n, o]) => `<span>${esc(n)}</span><span>${esc(o.status || "—")}${check(o)}</span>${o.message && o.status !== "tracking" ? `<span class="err">${esc(o.message)}</span>` : ""}`).join("")}</div>`;
 }
@@ -436,6 +444,7 @@ function renderObjects(s) {
     list.innerHTML = specs.length ? specs.map((o) => `<div class="row obj-row" data-name="${esc(o.name)}">
         <input value="${esc(o.prompt)}" title="${esc(o.name)}: prompt for the segmenter" spellcheck="false" aria-label="Object prompt">
         <span class="pill obj-state"></span>
+        <button class="icon-btn" title="Find again: forget its pose and locate it from scratch (when its pose is wrong or lost)" data-retrack ${o.mesh ? "" : "hidden"}>${icon("i-search")}</button>
         <button class="icon-btn" title="Scan again (new mesh)" data-rescan ${o.mesh ? "" : "hidden"}>${icon("i-refresh")}</button>
         <button class="icon-btn" title="Remove" data-remove>${icon("i-trash")}</button></div>`).join("")
       : "";
@@ -448,6 +457,11 @@ function renderObjects(s) {
     row.querySelector("input").disabled = running;
     row.querySelector("[data-remove]").disabled = running;
     row.querySelector("[data-rescan]").disabled = running || s.halted;
+    const retrack = row.querySelector("[data-retrack]");
+    retrack.disabled = running || !s.pose_tracking?.live;
+    retrack.title = s.pose_tracking?.live
+      ? "Find again: forget its pose and locate it from scratch (when its pose is wrong or lost)"
+      : "Find again: start the object pose tracking first";
   }
   const missing = specs.filter((o) => !o.mesh).length;
   $("#objects-sub").textContent = specs.length ? `${specs.length} objects${missing ? ` · ${missing} without mesh` : ""}` : "";
@@ -1397,6 +1411,11 @@ function wire() {
     saveObjects([...objectRows(), { name: "", prompt }]);
   };
   $("#obj-list").addEventListener("click", async (e) => {
+    const retrack = e.target.closest("[data-retrack]");
+    if (retrack) {
+      post("objects/retrack", { name: retrack.closest(".obj-row").dataset.name });
+      return;
+    }
     const rescan = e.target.closest("[data-rescan]");
     if (rescan) {
       const name = rescan.closest(".obj-row").dataset.name;

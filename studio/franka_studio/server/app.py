@@ -73,6 +73,7 @@ def build_app(studio: Studio) -> web.Application:
         "calibration/apply": (studio.calibration_apply, ["name"]),
         "objects/set": (studio.objects_set, ["objects"]),
         "objects/scan": (studio.objects_scan, ["names", "auto"]),
+        "objects/retrack": (studio.objects_retrack, ["name"]),   # Find again: one object registered anew
         "objects/capture": (lambda: studio.objects_scan_command("capture"), []),   # manual scan
         "objects/finish": (lambda: studio.objects_scan_command("finish"), []),
         "objects/stop": (studio.halt, []),               # stopping a scan is a Stop, as for calibration

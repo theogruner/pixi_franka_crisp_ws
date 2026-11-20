@@ -110,7 +110,7 @@ def with_object_poses(env_config: dict, specs: list[dict], topic: str = "/pose_t
 class PoseTrackingLink:
     def __init__(self, ros: object, topics: dict | None = None) -> None:
         topics = {"status": "/pose_tracking/status", "objects": "/pose_tracking/objects",
-                  "scan": "/pose_tracking/scan", **(topics or {})}
+                  "scan": "/pose_tracking/scan", "reset": "/pose_tracking/reset", **(topics or {})}
         self._lock = threading.Lock()
         self._status: dict | None = None
         self._status_t = 0.0
@@ -118,10 +118,19 @@ class PoseTrackingLink:
         ros.subscribe(String, topics["status"], self._on_status, depth=1)
         self._objects_pub = ros.publisher(String, topics["objects"], latched=True)
         self._scan_pub = ros.publisher(String, topics["scan"])
+        self._reset_pub = ros.publisher(String, topics["reset"])
 
     def set_objects(self, specs: list[dict]) -> None:
         self.specs = specs
         self._objects_pub.publish(String(data=json.dumps({"objects": specs})))
+
+    def reset_object(self, name: str) -> None:
+        """The node forgets ``name``'s pose and registers it from scratch on the next masks."""
+        self._reset_pub.publish(String(data=name))
+
+    def live(self) -> bool:
+        with self._lock:
+            return self._status is not None and time.time() - self._status_t < STATUS_STALE_S
 
     def send_scan(self, cmd: dict) -> None:
         self._scan_pub.publish(String(data=json.dumps(cmd)))
