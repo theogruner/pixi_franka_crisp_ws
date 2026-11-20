@@ -59,7 +59,10 @@ tracker:
   # an object carried by hand; CPU, ~5 ms; needs `pixi run build-m3t` in ../pose_tracking and the
   # desktop's display, else the node falls back to points and says so. points: points on the object
   # followed in 2D on the static camera only (BootsTAPIR, GPU), anchored to mesh points, refined
-  # with the depth. icp: the mesh fitted onto the depth each frame.
+  # with the depth. icp: the mesh fitted onto the depth each frame. foundationpose: m3t, but each frame
+  # FoundationPose's learned refiner (GPU, ~40 ms per object and camera) instead of M3T; needs
+  # `pixi run build-foundationpose` and its weights (../pose_tracking/third_party/foundationpose/README.md),
+  # else the node falls back to m3t and says so. Its cameras: foundationpose.cameras (default the static one).
   mode: m3t
   m3t:                               # M3T settings (pose_tracking/m3t.py M3TConfig), else its defaults
     # trust the stereo depth more than M3T's defaults (5/3/2 cm; made for 640x480 sensors): on the
