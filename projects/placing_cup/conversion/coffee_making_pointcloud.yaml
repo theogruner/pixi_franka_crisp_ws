@@ -1,0 +1,126 @@
+# Conversion of the coffee_making demos (insert_capsule, mug_hanging, perforare_capsule, place_cup)
+# to LeRobot, for data_postprocessing/scripts/convert_batched.py (studio: Cluster -> Copy + convert).
+# Observations as the project's env.yaml (what the policy gets at deployment): joint positions +
+# grippers, the three cameras at 224x224, the merged point cloud sampled like the client does.
+# Same layout for every task (both arms), so the four can be trained together.
+
+dataset:
+  repo_id: coffee_making
+  fps: 30                         # env.yaml frequency (the policy's rate); cameras 30 fps, cloud ~27 Hz
+  # Prompt per task folder. The studio's instruction (studio_episode.json) only when a folder is not
+  # listed: it is stale in insert_capsule/episode_20261120_043449 (still the perforate prompt).
+  task_prompts:
+    insert_capsule: Insert coffee capsule in coffee machine
+    mug_hanging: Hang the mug on the wooden stand.
+    perforare_capsule: Pull the lever to perforare the coffee capsule
+    place_cup: Pick the cup from the wooden tree and place it in the coffee machine.
+  task_from_episode: true
+  task: Make coffee
+
+# Frames while either arm is teleoperated (Meta Quest grip held)
+trigger:
+  topics: ["/franka_right/mq_debug", "/franka_left/mq_debug"]
+  reduce: any
+  msgtype: "franka_custom_msgs/msg/FMQDebug"
+  fields: "movement_enabled"
+
+mappings:
+  # videos/rgb_<camera>.mp4 + videos/timestamps.npy of the data collector (synced rig, 30 fps)
+  "observation.images.zed_middle":
+    msgtype: video
+    camera_name: zed_middle
+    encoding: rgb8
+    center_crop: true
+    resize: [224, 224]
+    max_lookback_ms: 100
+  "observation.images.zed_right_arm":
+    msgtype: video
+    camera_name: zed_right_arm
+    encoding: rgb8
+    center_crop: true
+    resize: [224, 224]
+    max_lookback_ms: 100
+  "observation.images.zed_left_arm":
+    msgtype: video
+    camera_name: zed_left_arm
+    encoding: rgb8
+    center_crop: true
+    resize: [224, 224]
+    max_lookback_ms: 100
+  "observation.state":            # (16,): right q 7, right gripper, left q 7, left gripper
+    - topic: "/franka_right/franka/joint_states"
+      msgtype: "sensor_msgs/msg/JointState"
+      fields: ["position"]
+      n_dof: 7
+    - topic: "/franka_right/franka_gripper/joint_states"
+      msgtype: sensor_msgs/msg/JointState
+      fields: ["position"]
+      n_dof: 1
+    - topic: "/franka_left/franka/joint_states"
+      msgtype: "sensor_msgs/msg/JointState"
+      fields: ["position"]
+      n_dof: 7
+    - topic: "/franka_left/franka_gripper/joint_states"
+      msgtype: sensor_msgs/msg/JointState
+      fields: ["position"]
+      n_dof: 1
+  # Merged Fast-FoundationStereo cloud (world frame), as env.yaml's observation.pointcloud
+  "observation.pointcloud":       # (4096, 6): x y z in m, r g b in 0..1
+    topic: /ffs/points
+    msgtype: sensor_msgs/msg/PointCloud2
+    num_points: 4096
+    fields: xyzrgb
+    sampling: voxel
+    crop: {min: [0.0, -0.9, -0.02], max: [1.1, 0.9, 0.7]}
+
+# Action layout (20,):
+#   [0:9]   right arm commanded EE pose (3 pos + 6d rot), base frame
+#   [9:10]  right gripper command (0 open .. 1.1 closed)
+#   [10:19] left arm commanded EE pose
+#   [19:20] left gripper command
+# The pose is the teleop's target (mq_debug robot_target_pose; the stack publishes no fijk_debug).
+# While an arm is not teleoperated (an arm not used in a task) its mq_debug pose is empty (zeros):
+# its action is then where it is (idle_pose), and its empty gripper topic holds `default` (open).
+action:
+  - topic: "/franka_right/mq_debug"
+    type: "AbsoluteCartesian"
+    msgtype: "franka_custom_msgs/msg/FMQDebug"
+    fields: ["robot_target_pose"]
+    idle_pose:                    # not teleoperated: its measured pose (FK; urdf in data_postprocessing)
+      joint_states: /franka_right/franka/joint_states
+      urdf: config/robots/dfki_fr3_right.urdf
+      link: franka_right_grasp_point
+    pose_fields: ['position', 'orientation']
+    rot_format: 'ee6d'
+    smoothing_window: 7
+    smoothing_polyorder: 3
+  - topic: "/franka_right/gripper/gripper_controller/joint_trajectory"
+    type: "AbsoluteJoint"
+    msgtype: "trajectory_msgs/msg/JointTrajectory"
+    fields: ["position"]
+    n_dof: 1
+    point_index: 0
+    interpolation: previous
+    default: [0.0]
+  - topic: "/franka_left/mq_debug"
+    type: "AbsoluteCartesian"
+    msgtype: "franka_custom_msgs/msg/FMQDebug"
+    fields: ["robot_target_pose"]
+    idle_pose:                    # not teleoperated: its measured pose (FK; urdf in data_postprocessing)
+      joint_states: /franka_left/franka/joint_states
+      urdf: config/robots/dfki_fr3_left.urdf
+      link: franka_left_grasp_point
+    pose_fields: ['position', 'orientation']
+    rot_format: 'ee6d'
+    smoothing_window: 7
+    smoothing_polyorder: 3
+  - topic: "/franka_left/gripper/gripper_controller/joint_trajectory"
+    type: "AbsoluteJoint"
+    msgtype: "trajectory_msgs/msg/JointTrajectory"
+    fields: ["position"]
+    n_dof: 1
+    point_index: 0
+    interpolation: previous
+    default: [0.0]
+
+action_interpolation: "linear"
