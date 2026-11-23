@@ -47,6 +47,20 @@ Open tasks at the top, dated log of done/notable changes below. Newest first.
 
 ## Log
 
+### 2026-11-23
+
+#### `run_robot.sh` without tmux left the nodes running on stop
+- **Problem:** with `ROBOT_NO_TMUX=1` (or no tmux installed), stopping the script with
+  `kill -TERM` ended both `ros2 launch` processes but left every node they started running:
+  controller managers, IK, safety, and both `joint_state_publisher`s at ~70 % CPU each.
+- **Root cause:** two things. Humble's `ros2 launch` has no handler for SIGTERM, so it dies at
+  once without stopping its nodes; only SIGINT shuts it down cleanly. And a non-interactive
+  script starts its background jobs with SIGINT ignored, so forwarding SIGINT alone does nothing
+  either (`SigIgn` in `/proc/<pid>/status` shows it).
+- **Solution:** `set -m` before starting the launches (job control does not ignore SIGINT in
+  background jobs), and the trap forwards SIGINT. A stop now ends all 15 nodes in ~2 s. Orphans
+  from an earlier stop are cleared with `kill -INT` on each node.
+
 ### 2026-10-31
 
 #### Right teleop node died at every start ("Device not found")

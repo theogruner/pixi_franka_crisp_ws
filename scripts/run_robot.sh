@@ -31,15 +31,18 @@ fi
 if [ -n "${ROBOT_NO_TMUX:-}" ] || ! command -v tmux &> /dev/null
 then
     [ -z "${ROBOT_NO_TMUX:-}" ] && echo "tmux is not installed. Running commands in background instead."
+    # Job control: unlike a script's plain background jobs, the launches do not start with
+    # SIGINT ignored. SIGINT is what makes ros2 launch stop its nodes; SIGTERM kills it at
+    # once and leaves them running.
+    set -m
     pids=()
     ros2 launch franka_launch example.launch.py spawn_franka_left:=$spawn_franka_left spawn_franka_right:=$spawn_franka_right use_fake_hardware:=$use_fake_hardware overrides_file:=$OVERRIDES_FILE &
     pids+=($!)
     ros2 launch robot_ik_layer start_ijk.launch.py spawn_franka_left:=$spawn_franka_left spawn_franka_right:=$spawn_franka_right bypass_safety:=$bypass_safety overrides_file:=$OVERRIDES_FILE &
     pids+=($!)
-    # Background jobs of a script ignore SIGINT, so forward a stop as SIGTERM (ros2 launch
-    # shuts its nodes down cleanly on it). The trap interrupts the first wait; the second
-    # one waits for the launches to finish shutting down.
-    trap 'kill -TERM "${pids[@]}" 2>/dev/null' INT TERM
+    # Forward a stop to both launches as SIGINT. The trap interrupts the first wait; the
+    # second one waits for the launches to finish shutting down.
+    trap 'kill -INT "${pids[@]}" 2>/dev/null' INT TERM
     wait
     wait
     exit 0
