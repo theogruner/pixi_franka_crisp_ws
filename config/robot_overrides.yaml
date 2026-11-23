@@ -6,6 +6,7 @@ spawn_franka_left: true
 spawn_franka_right: true
 use_fake_hardware: false
 bypass_safety: true
+use_rviz: true  # start RViz2 with the robot; the command line (use_rviz:=) takes precedence
 
 franka_left:
   robot_ip: "192.168.1.4"
