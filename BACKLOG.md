@@ -32,6 +32,15 @@ Open tasks at the top, dated log of done/notable changes below. Newest first.
       exists. The README's "Start Policy Server" / "Start Policy Client" steps still describe
       that old flow. Decide the shared client in round two, together with the studio, then fix
       the task, `run_client.sh` and the README.
+- [ ] **Per-machine `robot_overrides.yaml`** — the tracked `config/robot_overrides.yaml` is the
+      DFKI cell's: robot IPs `192.168.1.4` / `192.168.0.2`, Dynamixel ports and `rh_p12_rn_a`
+      grippers, the arms to spawn. Another cell, or one arm under test, means editing a tracked
+      file and remembering not to commit it. Same pattern as `config/local.env`: track an
+      example, gitignore `config/robot_overrides.yaml`, and decide whether the scripts fall back
+      to the example or stop with "copy the example" when it is missing (`setup.sh`'s `check`
+      reads it too). DFKI-specific but fine where they are: the `dfki` default profile in
+      `setup.sh` / `config/workspace.yaml`, and the FTDI serials in
+      `src/franka_launch/udev/99-dynamixel.rules` (tied to that hardware by nature).
 - [ ] Widen `rosdep install` from `src/franka_ros2` to all of `src/` (deliberately left alone
       during the manifest refactor to keep behaviour unchanged).
 - [x] Add Kay's config file for some tresholds: https://github.com/pompetzki/pixi_franka_ros2/blob/6d56274990ca0692217adebcd117da310c9b7381/scripts/launch/main.launch.py 
