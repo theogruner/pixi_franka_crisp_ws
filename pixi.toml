@@ -30,7 +30,6 @@ libtmux = ">=0.46.2,<0.47"
 omegaconf = "*"
 git = "*"
 openssh = "*"
-numpy = "<=2.3"
 
 [tasks]
 test_raw = "pytest --cov-report=html"
@@ -122,8 +121,8 @@ grpcio = ">=1.67.1,<2"
 pyzmq = ">=27.0.0,<28"
 pyserial = ">=3.5,<4"
 transforms3d = ">=0.4.2,<0.5"
-
-[feature.extra.dependencies]
+# crisp-python (pypi, above) requires numpy<=2.3. Pinned here on the conda side: conda pulls
+# numpy in regardless, so a pypi pin would make the environment unsolvable.
 numpy = "<=2.3"
 
 [feature.extra.pypi-dependencies]

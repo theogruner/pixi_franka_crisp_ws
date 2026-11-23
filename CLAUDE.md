@@ -146,9 +146,10 @@ when `use_fake_hardware: true`.
   internal forks. That surgery is a bespoke block in `setup.sh`; the three repos it handles are
   flagged `special: true` in the manifest so the generic clone loop skips them. It goes away when
   the planned DFKI `franka_ros2` fork lands.
-- `numpy` is pinned `<=2.3` on the **conda** side (`feature.extra.dependencies`) to match
-  `crisp-python`'s bound. Declaring it as a pypi dependency instead makes the environment
-  unsolvable: conda pulls numpy in regardless and its pin wins. Re-pin if crisp_py's bound moves.
+- `numpy` is pinned `<=2.3` on the **conda** side (`feature.franka.dependencies`, the feature
+  that brings in `crisp-python`) to match `crisp-python`'s bound. Declaring it as a pypi
+  dependency instead makes the environment unsolvable: conda pulls numpy in regardless and its
+  pin wins. Re-pin if crisp_py's bound moves.
 - Dynamixel grippers must appear as `/dev/dynamixel_left` / `/dev/dynamixel_right` (udev rules in
   `src/franka_launch/udev/`). `run_robot.sh` pings them with `scripts/python/check_gripper.py`
   before launching and aborts if a configured gripper is unpowered.
