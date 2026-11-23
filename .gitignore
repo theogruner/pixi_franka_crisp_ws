@@ -11,3 +11,6 @@ pixi.lock
 
 # data collector's default storage_path (franka_data_collection config: ./data)
 /data/
+
+# per-machine ROS settings, read by scripts/set_ros_env.sh (template: config/local.env.example)
+/config/local.env

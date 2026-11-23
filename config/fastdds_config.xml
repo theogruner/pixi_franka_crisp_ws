@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <!--
-  Fast DDS profile for the control PC (multi-homed: 2 arms, camera link, lab, docker).
-  Loaded by scripts/set_ros_env.sh via FASTRTPS_DEFAULT_PROFILES_FILE.
+  Fast DDS profile for the DFKI control PC (multi-homed: 2 arms, camera link, lab, docker).
+  Nothing loads it by default. Enable it on that PC in config/local.env:
+      FASTRTPS_DEFAULT_PROFILES_FILE=config/fastdds_config.xml
 
   PURPOSE 1 - stop camera black-holing:
     Restrict the PC's UDP transport to loopback + the 10G camera link (192.168.10.100)

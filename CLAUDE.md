@@ -135,9 +135,19 @@ when `use_fake_hardware: true`.
   there is no `/opt/ros` — never source a system ROS setup.
 - `scripts/set_ros_env.sh` runs on every activation: it prepends `$CONDA_PREFIX/lib` to
   `LD_LIBRARY_PATH`, sources `install/setup.bash` if present, and restarts the `ros2` daemon.
-  It sources `scripts/personal_ros_env.sh` if you create one (gitignored, per-machine
-  `ROS_DOMAIN_ID` / `RMW_IMPLEMENTATION` overrides); otherwise defaults to domain 5 and
-  `rmw_fastrtps_cpp`.
+  Per-machine settings (`ROS_DOMAIN_ID`, `RMW_IMPLEMENTATION`, the Fast DDS profile) go in
+  `config/local.env` (gitignored; copy `config/local.env.example`): plain `KEY=value` lines,
+  parsed rather than sourced, so no `export` or `$VARIABLES`. A variable already set in the
+  shell wins over the file (`ROS_DOMAIN_ID=7 pixi run teleop`). Unset keys default to domain 5,
+  `rmw_fastrtps_cpp` and no Fast DDS profile. Pixi hides the activation script's output, so
+  its warnings (bad lines, domain mismatch) only show when you source it by hand.
+- `config/fastdds_config.xml` is the DFKI robot PC's Fast DDS profile (only loopback and the
+  camera link, unicast discovery for domain 5), opt-in per machine:
+  `FASTRTPS_DEFAULT_PROFILES_FILE=config/fastdds_config.xml` in `config/local.env` (a relative
+  path is resolved against the project root). Without it that PC also advertises docker0 and
+  the Jetson's camera topics show up with no data. It has to apply to every ROS process on the
+  PC (teleop, data collection, the CLI), which is why it is set on activation and not as a
+  `pixi run robot` argument.
 - Most `src/` repos are cloned over **SSH** (`git@github.com:DFKI-SAIROL/...`) even though the
   DFKI-SAIROL repos are public — so `pixi run setup` currently needs an SSH key for repos that
   could be fetched anonymously. Switching those manifest URLs to `https://` is a pending
