@@ -20,9 +20,10 @@ repos, each with its own git history.
 
 `franka_meta_quest` (VR teleop) is its own repository, so teleop is separately
 selectable as the `teleop` group. The old `franka_py` multi-package repo was dropped from
-the workspace: `franka_client` is superseded by the policy client, `franka_control_module`
-and `zed_rig_aggregator_node` are unused, and `franka_visualization` was not carried over
-(recover it from that repo's history if the rviz pose trails are wanted again).
+the workspace: `franka_control_module` and `zed_rig_aggregator_node` are unused,
+`franka_visualization` was not carried over (recover it from that repo's history if the rviz
+pose trails are wanted again), and `franka_client` has no replacement yet: there is no shared
+policy client for now (see `BACKLOG.md`).
 
 ## Commands
 
@@ -44,7 +45,9 @@ pixi shell -e humble      # required: `pixi run setup` calls rosdep, which needs
 | Launch driver + IK/safety layer (tmux) | `pixi run robot` |
 | VR teleoperation (Meta Quest) | `pixi run teleop` |
 | Data collection | `pixi run data-collection` |
-| Policy client | `pixi run client` |
+
+`pixi run client` (and `pixi run launch`, which depends on it) still runs the dropped
+`franka_client` and fails until a shared policy client is chosen.
 
 Single test: `pixi run -e humble pytest path/to/test_file.py::test_name`. For a single ROS
 package: `colcon build --symlink-install --packages-select <pkg>` and
