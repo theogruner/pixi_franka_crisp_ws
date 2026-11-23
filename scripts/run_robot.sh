@@ -26,11 +26,21 @@ if [ "$use_fake_hardware" = false ]; then
     [ "$spawn_franka_right" = true ] && [ "$gripper_type_right" = rh_p12_rn_a ] && check_gripper right
 fi
 
-if ! command -v tmux &> /dev/null
+# ROBOT_NO_TMUX=1 (set by Franka Studio) keeps both launches attached to this process, so
+# whoever started the script can stream their output and stop them with one signal.
+if [ -n "${ROBOT_NO_TMUX:-}" ] || ! command -v tmux &> /dev/null
 then
-    echo "tmux is not installed. Running commands in background instead."
+    [ -z "${ROBOT_NO_TMUX:-}" ] && echo "tmux is not installed. Running commands in background instead."
+    pids=()
     ros2 launch franka_launch example.launch.py spawn_franka_left:=$spawn_franka_left spawn_franka_right:=$spawn_franka_right use_fake_hardware:=$use_fake_hardware overrides_file:=$OVERRIDES_FILE &
+    pids+=($!)
     ros2 launch robot_ik_layer start_ijk.launch.py spawn_franka_left:=$spawn_franka_left spawn_franka_right:=$spawn_franka_right bypass_safety:=$bypass_safety overrides_file:=$OVERRIDES_FILE &
+    pids+=($!)
+    # Background jobs of a script ignore SIGINT, so forward a stop as SIGTERM (ros2 launch
+    # shuts its nodes down cleanly on it). The trap interrupts the first wait; the second
+    # one waits for the launches to finish shutting down.
+    trap 'kill -TERM "${pids[@]}" 2>/dev/null' INT TERM
+    wait
     wait
     exit 0
 fi
