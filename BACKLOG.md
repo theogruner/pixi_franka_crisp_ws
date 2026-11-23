@@ -23,6 +23,10 @@ Open tasks at the top, dated log of done/notable changes below. Newest first.
 - [ ] **Check for duplicate package names** — the IAS `franka_robot_state_broadcaster` repo also
       ships `franka_ros2` and `franka_semantic_components` packages, which `franka_ros2` provides
       too. Verify colcon is picking the intended copy.
+- [ ] **Joint limits in the IK** — `robot_ik_layer` (DLS, no limit handling) keeps pushing a joint
+      past its FR3 limit when the teleop target asks for it; the safety node then holds the
+      command 0.2 rad (`max_spring_stretch`) into the limit indefinitely. Seen on the left wrist
+      (joint7 2.94 measured, 3.14 commanded) on 2026-10-24.
 - [ ] Widen `rosdep install` from `src/franka_ros2` to all of `src/` (deliberately left alone
       during the manifest refactor to keep behaviour unchanged).
 - [x] Add Kay's config file for some tresholds: https://github.com/pompetzki/pixi_franka_ros2/blob/6d56274990ca0692217adebcd117da310c9b7381/scripts/launch/main.launch.py 
@@ -37,6 +41,39 @@ Open tasks at the top, dated log of done/notable changes below. Newest first.
 
 
 ## Log
+
+### 2026-10-31
+
+#### Right teleop node died at every start ("Device not found")
+- **Problem:** only the left arm followed the Quest. The right `oculus_action_main` exited at
+  startup with `Device not found. Make sure that device is running and is connected over USB`;
+  the left one, started at the same moment, found the Quest.
+- **Root cause:** both nodes look up the Quest at once and the first to need it starts the adb
+  server. The other connects while that server is still enumerating USB, gets an empty device
+  list and `get_usb_device()` exited on the first try. It used to be hidden by an adb server
+  left running from earlier; since teleop is a studio systemd unit, the server it starts lives in
+  `franka-studio-teleop.service`'s cgroup and dies with it, so every start raced.
+- **Solution:** `get_usb_device()` (`franka_meta_quest/oculus_action/oculus_reader.py`) retries
+  for up to 10 s before giving up.
+- **Also that day:** the right gripper closed on left commands because the two U2D2 adapters
+  had been re-plugged to the opposite grippers (2026-10-30); `99-dynamixel.rules` names them by
+  FTDI serial, so the cabling must match it. Check with `ls -l /dev/dynamixel_*` while one
+  adapter is unplugged.
+
+### 2026-10-24
+
+#### Left teleop Y (home) aborted at once: wrist against its limit
+- **Problem:** Y on the left controller started a joint homing that aborted within 2–20 ms
+  (`aborted: the arm does not follow (moved by something else?)`); B on the right worked.
+- **Root cause:** the left wrist sat at joint7 = 2.94 rad (FR3 limit 3.016) and the IK target
+  asked for more. The IK has no joint limits, so the safety node's spring clamp held the command
+  at measured + `max_spring_stretch` (0.2) = 3.14. `JointHome` plans from the commanded joints and
+  aborts when measured is more than `MAX_DEVIATION` (also 0.2) off the plan, so a joint pinned at
+  the clamp fails on the first tick, i.e. exactly when the arm is stuck and homing is wanted.
+- **Solution:** `franka_meta_quest/joint_home.py` allows each joint its commanded-vs-measured gap
+  at the start (+0.05 rad) when that exceeds `MAX_DEVIATION`; other joints keep 0.2, and a frozen
+  arm is still caught. The abort message now names the joint and the gap. The IK winding a joint
+  into its limit is not fixed (see the TODO above).
 
 ### 2026-09-01
 
