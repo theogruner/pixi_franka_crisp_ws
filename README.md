@@ -12,6 +12,7 @@
     - [1.2.3. Unified Setup \& Environment Initialization](#123-unified-setup--environment-initialization)
     - [1.2.4. Build the Workspace](#124-build-the-workspace)
     - [1.2.5 Libfranka](#125-libfranka)
+    - [1.2.6. ROS Network Settings](#126-ros-network-settings)
   - [1.3. Running the Robot](#13-running-the-robot)
     - [1.3.1. Base Launch (with Safety Layer)](#131-base-launch-with-safety-layer)
     - [1.3.2. Teleoperation (Meta Quest VR)](#132-teleoperation-meta-quest-vr)
@@ -143,6 +144,36 @@ Make sure to run a realtime kernel and to add your user to the `realtime` group 
 sudo usermod -aG realtime <user>
 ```
 
+### 1.2.6. ROS Network Settings
+Per-machine ROS settings go in `config/local.env` (gitignored). Without it, a machine runs on
+`ROS_DOMAIN_ID=5`, `rmw_fastrtps_cpp` and the Fast DDS defaults, which is right for most machines.
+To change them, start from the template:
+```bash
+cp config/local.env.example config/local.env
+```
+The file takes plain `KEY=value` lines (no `export`, no `$VARIABLES`) and is read whenever the
+Pixi environment activates, so re-enter `pixi shell` after editing it. A variable already set in
+your shell wins over the file, e.g. `ROS_DOMAIN_ID=7 pixi run teleop`.
+
+**On the DFKI robot PC**, enable the lab's Fast DDS profile in `config/local.env`:
+```
+FASTRTPS_DEFAULT_PROFILES_FILE=config/fastdds_config.xml
+```
+The PC has several network interfaces (both arms, the camera link, the lab network, docker). The
+profile limits ROS traffic to loopback and the 10G link to the camera Jetson (`192.168.10.100`)
+and finds the Jetson (`192.168.10.212`) by unicast discovery. Without it, the Jetson's camera
+topics show up on the PC but carry no data. Check it from a fresh `pixi shell -e humble`:
+```bash
+echo $FASTRTPS_DEFAULT_PROFILES_FILE   # .../config/fastdds_config.xml
+```
+
+> [!WARNING]
+> The profile is for the robot PC only (it whitelists that PC's camera-link address), and its
+> discovery ports are for `ROS_DOMAIN_ID=5` with at most 40 ROS processes on the PC and 20 on the
+> Jetson. Processes beyond that, or on another domain, are silently not discovered. To change
+> either, regenerate the ports as described at the top of
+> [`config/fastdds_config.xml`](config/fastdds_config.xml).
+
 
 ---
 
@@ -224,4 +255,8 @@ Then launch as usual with `pixi run robot`.
 
 ---
 ## 1.5. Troubleshooting
+
+- **Camera topics are listed on the DFKI robot PC, but `ros2 topic echo` prints nothing:** the
+  Fast DDS profile is most likely not active. See
+  [1.2.6. ROS Network Settings](#126-ros-network-settings).
 
